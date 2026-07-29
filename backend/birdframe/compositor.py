@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from .schemas import Detection, PublicSettings
 
@@ -33,6 +33,26 @@ PALETTES = {
     "classic": ((74, 57, 41), (174, 112, 48), (50, 72, 99), (163, 61, 44), (110, 119, 82)),
     "muted": ((85, 72, 56), (137, 115, 75), (79, 94, 104), (129, 79, 71), (116, 123, 94)),
     "vivid": ((48, 43, 38), (194, 111, 31), (35, 74, 125), (184, 45, 40), (77, 130, 86)),
+}
+
+# BirdWeather commonly supplies English common names.  Keep a local Norwegian
+# field-guide vocabulary for the species most likely to occur in Nordic public
+# stations; an unknown name falls back gracefully instead of blocking a render.
+NORWEGIAN_NAMES = {
+    "Apus apus": "tårnseiler", "Pica pica": "skjære", "Turdus merula": "svarttrost",
+    "Corvus cornix": "kråke", "Corvus corax": "ravn", "Sturnus vulgaris": "stær",
+    "Passer domesticus": "gråspurv", "Columba palumbus": "ringdue", "Erithacus rubecula": "rødstrupe",
+    "Parus major": "kjøttmeis", "Cyanistes caeruleus": "blåmeis", "Aegithalos caudatus": "stjertmeis",
+    "Lophophanes cristatus": "toppmeis", "Periparus ater": "svartmeis", "Poecile montanus": "granmeis",
+    "Poecile palustris": "løvmeis", "Fringilla coelebs": "bokfink", "Chloris chloris": "grønnfink",
+    "Carduelis carduelis": "stillits", "Spinus spinus": "grønnsisik", "Pyrrhula pyrrhula": "dompap",
+    "Turdus pilaris": "gråtrost", "Turdus iliacus": "rødvingetrost", "Turdus philomelos": "måltrost",
+    "Turdus viscivorus": "duetrost", "Motacilla alba": "linerle", "Hirundo rustica": "låvesvale",
+    "Delichon urbicum": "taksvale", "Phylloscopus trochilus": "løvsanger", "Phylloscopus collybita": "gransanger",
+    "Ficedula hypoleuca": "svarthvit fluesnapper", "Muscicapa striata": "grå fluesnapper",
+    "Dryobates major": "flaggspett", "Picus viridis": "grønnspett", "Accipiter nisus": "spurvehauk",
+    "Buteo buteo": "musvåk", "Falco tinnunculus": "tårnfalk", "Anas platyrhynchos": "stokkand",
+    "Cygnus olor": "knoppsvane", "Larus canus": "fiskemåke",
 }
 
 
@@ -148,19 +168,24 @@ def _try_pack(items: list[tuple[SpeciesCount, Image.Image]], width: int, height:
     occupancy = Image.new("L", (math.ceil(width / scale), math.ceil(height / scale)), 0)
     rng = random.Random(seed)
     placements: list[Placement] = []
-    center_x, center_y = width // 2, height // 2
+    # A shuffled, aspect-aware grid makes every species claim a part of the
+    # canvas.  The former single-origin spiral concentrated birds in the middle.
+    count = max(1, len(items))
+    columns = max(1, math.ceil(math.sqrt(count * width / height)))
+    rows = math.ceil(count / columns)
+    cells = [(column, row) for row in range(rows) for column in range(columns)]
+    rng.shuffle(cells)
     for index, (species, asset) in enumerate(items):
-        if index == 0:
-            candidates = [(center_x - asset.width // 2, center_y - asset.height // 2)]
-        else:
-            candidates = []
-            # Elliptic spiral is intentionally wider than tall, matching a landscape Frame display.
-            for step in range(1, 2600):
-                angle = step * 0.42 + rng.random() * 0.015
-                radius = 5.2 * math.sqrt(step)
-                x = int(center_x + radius * 1.48 * math.cos(angle) - asset.width / 2)
-                y = int(center_y + radius * 0.93 * math.sin(angle) - asset.height / 2)
-                candidates.append((x, y))
+        column, row = cells[index]
+        target_x = margin + (column + 0.5) * (width - 2 * margin) / columns
+        target_y = margin + (row + 0.5) * (height - 2 * margin) / rows
+        candidates = [(int(target_x - asset.width / 2), int(target_y - asset.height / 2))]
+        for step in range(1, 2600):
+            angle = step * 0.42 + rng.random() * 0.015
+            radius = 5.2 * math.sqrt(step)
+            x = int(target_x + radius * 1.45 * math.cos(angle) - asset.width / 2)
+            y = int(target_y + radius * 0.90 * math.sin(angle) - asset.height / 2)
+            candidates.append((x, y))
         chosen: tuple[int, int] | None = None
         for x, y in candidates:
             if x < margin or y < margin or x + asset.width > width - margin or y + asset.height > height - margin:
@@ -175,6 +200,44 @@ def _try_pack(items: list[tuple[SpeciesCount, Image.Image]], width: int, height:
     return placements
 
 
+def _font(size: int, *, italic: bool = False) -> ImageFont.ImageFont:
+    names = ("DejaVuSerif-Italic.ttf", "DejaVuSerif.ttf") if italic else ("DejaVuSerif.ttf",)
+    for name in names:
+        try:
+            return ImageFont.truetype(name, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def _norwegian_name(species: SpeciesCount) -> str:
+    return NORWEGIAN_NAMES.get(species.scientific_name, species.common_name)
+
+
+def _draw_number(draw: ImageDraw.ImageDraw, x: int, y: int, number: int, paper: tuple[int, int, int]) -> None:
+    radius = 27
+    draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=paper, outline=(74, 57, 41), width=3)
+    text = str(number)
+    font = _font(30)
+    box = draw.textbbox((0, 0), text, font=font)
+    draw.text((x - (box[2] - box[0]) / 2, y - (box[3] - box[1]) / 2 - 2), text, fill=(74, 57, 41), font=font)
+
+
+def _draw_legend(canvas: Image.Image, placements: list[Placement], start_x: int, paper: tuple[int, int, int]) -> None:
+    draw = ImageDraw.Draw(canvas)
+    width, height = canvas.size
+    draw.line((start_x, 88, start_x, height - 88), fill=(130, 108, 77), width=2)
+    title_font, name_font, latin_font = _font(42, italic=True), _font(31, italic=True), _font(22, italic=True)
+    draw.text((start_x + 42, 94), "Dagens fugler", fill=(74, 57, 41), font=title_font)
+    available = height - 205
+    row_height = max(62, min(104, available // max(1, len(placements))))
+    for number, placement in enumerate(placements, start=1):
+        y = 174 + (number - 1) * row_height
+        _draw_number(draw, start_x + 62, y + 22, number, paper)
+        draw.text((start_x + 106, y), _norwegian_name(placement.species), fill=(74, 57, 41), font=name_font)
+        draw.text((start_x + 106, y + 34), placement.species.scientific_name or placement.species.common_name, fill=(110, 90, 65), font=latin_font)
+
+
 def collage_image(species: list[SpeciesCount], settings: PublicSettings, art_dir: Path) -> tuple[Image.Image, list[dict[str, object]]]:
     width, height = settings.output_width, settings.output_height
     canvas = Image.new("RGB", (width, height), _hex_rgb(settings.paper_tone))
@@ -182,9 +245,13 @@ def collage_image(species: list[SpeciesCount], settings: PublicSettings, art_dir
         draw = ImageDraw.Draw(canvas)
         draw.text((width // 2 - 130, height // 2), "Waiting for birds…", fill=(74, 57, 41), font=None)
         return canvas, []
-    density = {"sparse": 0.28, "standard": 0.37, "full": 0.46}[settings.collage_density]
-    scores = [max(1, item.count) ** 0.65 for item in species]
-    area_budget = width * height * density
+    paper = _hex_rgb(settings.paper_tone)
+    legend_width = int(width * 0.28) if settings.labels_enabled else 0
+    art_width = width - legend_width
+    density = {"sparse": 0.52, "standard": 0.68, "full": 0.80}[settings.collage_density]
+    # Counts should influence prominence, not turn a frequent bird into a giant.
+    scores = [1 + 0.15 * math.log1p(max(1, item.count)) for item in species]
+    area_budget = art_width * height * density
     seed = int(hashlib.sha256("|".join(item.common_name for item in species).encode()).hexdigest()[:16], 16)
     prepared: list[tuple[SpeciesCount, Image.Image]] = []
     for index, item in enumerate(species):
@@ -200,7 +267,7 @@ def collage_image(species: list[SpeciesCount], settings: PublicSettings, art_dir
     for shrink in range(10):
         factor = 0.93 ** shrink
         scaled = [(item, asset.resize((max(1, int(asset.width * factor)), max(1, int(asset.height * factor))), Image.Resampling.LANCZOS)) for item, asset in prepared]
-        placements = _try_pack(scaled, width, height, margin, seed)
+        placements = _try_pack(scaled, art_width, height, margin, seed)
         if placements:
             break
     if not placements:
@@ -209,19 +276,22 @@ def collage_image(species: list[SpeciesCount], settings: PublicSettings, art_dir
         for index, (item, asset) in enumerate(prepared[:12]):
             scale = min(0.35, 0.75 / math.sqrt(len(prepared[:12])))
             image = asset.resize((int(asset.width * scale), int(asset.height * scale)), Image.Resampling.LANCZOS)
-            x = margin + (index % 4) * (width - 2 * margin) // 4 + 24
+            x = margin + (index % 4) * (art_width - 2 * margin) // 4 + 24
             y = margin + (index // 4) * (height - 2 * margin) // 3 + 24
             placements.append(Placement(item, image, x, y))
-    for placement in placements:
+    for number, placement in enumerate(placements, start=1):
         canvas.paste(placement.image, (placement.x, placement.y), placement.image)
+        if settings.labels_enabled:
+            visible = placement.image.getchannel("A").getbbox() or (0, 0, placement.image.width, placement.image.height)
+            marker_x = placement.x + max(28, visible[0] - 16)
+            marker_y = placement.y + max(28, visible[1] - 16)
+            _draw_number(ImageDraw.Draw(canvas), marker_x, marker_y, number, paper)
     species_data = [{"common_name": item.species.common_name, "scientific_name": item.species.scientific_name,
                      "count": item.species.count, "confidence": item.species.confidence,
                      "latest_at": item.species.latest_at, "x": item.x, "y": item.y,
                      "width": item.image.width, "height": item.image.height} for item in placements]
     if settings.labels_enabled:
-        draw = ImageDraw.Draw(canvas)
-        draw.rectangle((0, height - 88, width, height), fill=(*_hex_rgb(settings.paper_tone), 230))
-        draw.text((42, height - 58), " · ".join(item.common_name for item in species[:5]), fill=(74, 57, 41))
+        _draw_legend(canvas, placements, art_width, paper)
     return canvas, species_data
 
 
