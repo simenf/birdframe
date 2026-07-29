@@ -36,27 +36,6 @@ PALETTES = {
     "vivid": ((48, 43, 38), (194, 111, 31), (35, 74, 125), (184, 45, 40), (77, 130, 86)),
 }
 
-# BirdWeather commonly supplies English common names.  Keep a local Norwegian
-# field-guide vocabulary for the species most likely to occur in Nordic public
-# stations; an unknown name falls back gracefully instead of blocking a render.
-NORWEGIAN_NAMES = {
-    "Apus apus": "tårnseiler", "Pica pica": "skjære", "Turdus merula": "svarttrost",
-    "Corvus cornix": "kråke", "Corvus corax": "ravn", "Sturnus vulgaris": "stær",
-    "Passer domesticus": "gråspurv", "Columba palumbus": "ringdue", "Erithacus rubecula": "rødstrupe",
-    "Parus major": "kjøttmeis", "Cyanistes caeruleus": "blåmeis", "Aegithalos caudatus": "stjertmeis",
-    "Lophophanes cristatus": "toppmeis", "Periparus ater": "svartmeis", "Poecile montanus": "granmeis",
-    "Poecile palustris": "løvmeis", "Fringilla coelebs": "bokfink", "Chloris chloris": "grønnfink",
-    "Carduelis carduelis": "stillits", "Spinus spinus": "grønnsisik", "Pyrrhula pyrrhula": "dompap",
-    "Turdus pilaris": "gråtrost", "Turdus iliacus": "rødvingetrost", "Turdus philomelos": "måltrost",
-    "Turdus viscivorus": "duetrost", "Motacilla alba": "linerle", "Hirundo rustica": "låvesvale",
-    "Delichon urbicum": "taksvale", "Phylloscopus trochilus": "løvsanger", "Phylloscopus collybita": "gransanger",
-    "Ficedula hypoleuca": "svarthvit fluesnapper", "Muscicapa striata": "grå fluesnapper",
-    "Dryobates major": "flaggspett", "Picus viridis": "grønnspett", "Accipiter nisus": "spurvehauk",
-    "Buteo buteo": "musvåk", "Falco tinnunculus": "tårnfalk", "Anas platyrhynchos": "stokkand",
-    "Cygnus olor": "knoppsvane", "Larus canus": "fiskemåke",
-}
-
-
 def group_detections(detections: Iterable[Detection]) -> list[SpeciesCount]:
     grouped: dict[str, list[Detection]] = {}
     for detection in detections:
@@ -304,11 +283,7 @@ def _script_font(size: int) -> ImageFont.ImageFont:
 
 
 def _localized_name(species: SpeciesCount, locale: str) -> str:
-    # The generated NNKF database covers the complete current world list;
-    # retain the small built-in map as a compatibility fallback for local
-    # additions made before the database was imported.
-    fallback = NORWEGIAN_NAMES.get(species.scientific_name, species.common_name) if locale == "no" else species.common_name
-    return localized_species_name(species.scientific_name, fallback, locale)
+    return localized_species_name(species.scientific_name, species.common_name, locale)
 
 
 def _draw_number(draw: ImageDraw.ImageDraw, x: int, y: int, number: int, paper: tuple[int, int, int], radius: int = 27) -> None:
