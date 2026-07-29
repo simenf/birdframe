@@ -11,7 +11,7 @@ class PublicSettings(BaseModel):
     latitude: float | None = None
     longitude: float | None = None
     timezone: str = "UTC"
-    language: str = "en"
+    language: Literal["en", "no"] = "no"
     detection_source: Literal["birdweather", "birdweather_public", "birdnet_go"] = "birdweather_public"
     birdnet_go_url: str = "http://birdnet-go:8080"
     birdweather_public_station_id: int | None = Field(default=None, ge=1)

@@ -17,6 +17,8 @@ frontend/dist/
 .env
 .env.local
 data/
+!backend/birdframe/data/
+!backend/birdframe/data/*.json
 birdframe-data/
 *.db
 *.sqlite*

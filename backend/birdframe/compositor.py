@@ -10,6 +10,7 @@ from typing import Iterable
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 from .schemas import Detection, PublicSettings
+from .localization import localized_species_name
 
 
 @dataclass(frozen=True)
@@ -302,8 +303,12 @@ def _script_font(size: int) -> ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
-def _norwegian_name(species: SpeciesCount) -> str:
-    return NORWEGIAN_NAMES.get(species.scientific_name, species.common_name)
+def _localized_name(species: SpeciesCount, locale: str) -> str:
+    # The generated NNKF database covers the complete current world list;
+    # retain the small built-in map as a compatibility fallback for local
+    # additions made before the database was imported.
+    fallback = NORWEGIAN_NAMES.get(species.scientific_name, species.common_name) if locale == "no" else species.common_name
+    return localized_species_name(species.scientific_name, fallback, locale)
 
 
 def _draw_number(draw: ImageDraw.ImageDraw, x: int, y: int, number: int, paper: tuple[int, int, int], radius: int = 27) -> None:
@@ -353,7 +358,7 @@ def _marker_position(placement: Placement, birds: Image.Image, markers: Image.Im
     return None
 
 
-def _draw_legend(canvas: Image.Image, placements: list[Placement], start_x: int, paper: tuple[int, int, int], script_size: str) -> None:
+def _draw_legend(canvas: Image.Image, placements: list[Placement], start_x: int, paper: tuple[int, int, int], script_size: str, locale: str) -> None:
     draw = ImageDraw.Draw(canvas)
     width, height = canvas.size
     draw.line((start_x, 88, start_x, height - 88), fill=(130, 108, 77), width=2)
@@ -369,7 +374,7 @@ def _draw_legend(canvas: Image.Image, placements: list[Placement], start_x: int,
     for number, placement in enumerate(placements, start=1):
         y = 174 + (number - 1) * row_height
         _draw_number(draw, start_x + 62, y + 22, number, paper)
-        draw.text((start_x + 106, y), _norwegian_name(placement.species), fill=(74, 57, 41), font=name_font)
+        draw.text((start_x + 106, y), _localized_name(placement.species, locale), fill=(74, 57, 41), font=name_font)
         draw.text((start_x + 106, y + 34), placement.species.scientific_name or placement.species.common_name, fill=(110, 90, 65), font=latin_font)
 
 
@@ -470,7 +475,7 @@ def collage_image(species: list[SpeciesCount], settings: PublicSettings, art_dir
                      "latest_at": item.species.latest_at, "x": item.x, "y": item.y,
                      "width": item.image.width, "height": item.image.height} for item in placements]
     if settings.labels_enabled:
-        _draw_legend(canvas, placements, art_width, paper, settings.legend_script_size)
+        _draw_legend(canvas, placements, art_width, paper, settings.legend_script_size, settings.language)
     return canvas, species_data
 
 
