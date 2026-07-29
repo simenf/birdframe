@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# JavaScript
+node_modules/
+frontend/dist/
+
+# Local configuration and persistent application data
+.env
+.env.local
+data/
+birdframe-data/
+*.db
+*.sqlite*
+secret.key
+samsung-token*
+
+# Generated artwork and diagnostics
+art/
+packages/
+generated/
+previews/
+logs/
+support-bundle*.zip
+
+# OS/editor files
+.DS_Store
+.idea/
+.vscode/

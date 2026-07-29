@@ -1,0 +1,37 @@
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+from birdframe.main import create_app
+
+
+def test_detection_generates_identical_current_display_artifact(tmp_path: Path):
+    app = create_app(tmp_path)
+    with TestClient(app) as client:
+        settings = client.get("/api/v1/settings").json()
+        settings.update({"output_width": 640, "output_height": 360, "display_api_enabled": True})
+        assert client.put("/api/v1/settings", json=settings).status_code == 200
+        created = client.post("/api/v1/detections", json={
+            "common_name": "Eurasian Blackbird", "scientific_name": "Turdus merula", "confidence": 0.91,
+        })
+        assert created.status_code == 201
+        metadata = client.get("/api/v1/display/current.json").json()
+        image = client.get("/api/v1/display/current.jpg")
+        assert image.status_code == 200
+        assert image.headers["etag"].strip('"') == metadata["sha256"]
+        assert len(image.content) > 1000
+        assert client.get("/api/v1/display/current.jpg", headers={"If-None-Match": image.headers["etag"]}).status_code == 304
+        assert metadata["species"][0]["common_name"] == "Eurasian Blackbird"
+
+
+def test_display_api_token_is_separate_from_settings_secrets(tmp_path: Path):
+    app = create_app(tmp_path)
+    with TestClient(app) as client:
+        settings = client.get("/api/v1/settings").json()
+        settings.update({"display_api_require_token": True, "display_api_token": "this-is-a-long-display-token"})
+        saved = client.put("/api/v1/settings", json=settings)
+        assert saved.status_code == 200
+        assert saved.json()["has_display_api_token"] is True
+        assert "display_api_token" not in saved.json()
+        assert client.get("/api/v1/display/current.jpg").status_code == 401
+        assert client.get("/api/v1/display/current.jpg?token=this-is-a-long-display-token").status_code == 200

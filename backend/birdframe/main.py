@@ -1,0 +1,420 @@
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import os
+import shutil
+import tempfile
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from PIL import Image
+
+from .adapters import AdapterError, BirdNETGoClient, BirdWeatherClient, OpenRouterClient, ProviderUnavailable, SamsungFrameClient
+from .compositor import collage_image, group_detections, latest_visitor_image
+from .packages import PackageError, fetch_catalog, install_package
+from .schemas import (CompositionSummary, Detection, DetectionCreate, JobRequest, PackageInstallRequest,
+                      PublicSettings, SettingsResponse, SettingsUpdate, SourceTestRequest)
+from .storage import Store
+
+
+def data_directory() -> Path:
+    # Docker sets /data explicitly.  A workspace-relative default keeps imports,
+    # tests, and local development from trying to create a root-owned directory.
+    return Path(os.environ.get("BIRDFRAME_DATA_DIR", "./data"))
+
+
+def frontend_directory() -> Path:
+    return Path(os.environ.get("BIRDFRAME_FRONTEND_DIST", "/app/frontend-dist"))
+
+
+def composition_summary(row: dict[str, Any]) -> CompositionSummary:
+    return CompositionSummary(
+        id=row["id"], revision=row["revision"], created_at=datetime.fromisoformat(row["created_at"]),
+        mode=row["mode"], width=row["width"], height=row["height"], sha256=row["sha256"],
+        species=row["species"], tv_confirmed=row["tv_confirmed"],
+    )
+
+
+def remove_paper_background(image: Image.Image, paper: str = "#f2e4c9") -> Image.Image:
+    """Conservative local chroma-key fallback for images generated on a uniform cream ground."""
+    image = image.convert("RGBA")
+    paper = paper.lstrip("#")
+    target = tuple(int(paper[index:index + 2], 16) for index in (0, 2, 4))
+    pixels = image.load()
+    for y in range(image.height):
+        for x in range(image.width):
+            red, green, blue, alpha = pixels[x, y]
+            distance = abs(red - target[0]) + abs(green - target[1]) + abs(blue - target[2])
+            if distance < 42:
+                pixels[x, y] = (red, green, blue, 0)
+            elif distance < 84:
+                pixels[x, y] = (red, green, blue, int(alpha * (distance - 42) / 42))
+    return image
+
+
+def style_prompt(common_name: str, scientific_name: str, pose: str, addendum: str) -> str:
+    return f"""Generate a {pose} {common_name} ({scientific_name}) in the style of an Edo-period Japanese kachō-e woodblock print. Render with very few marks: two to four flat color zones with sharp boundaries, confident sumi-e ink linework, and soft watercolor washes. Use an earthy restrained palette of burnt umber, ochre, indigo, vermillion, and muted greens. Keep eye, beak, and feet crisp in ink. Match diagnostic field marks and proportions of this exact species.
+
+Use one consistent warm cream aged-mulberry-paper ground filling the entire image. No branch, twig, perch, foliage, scenery, border, caption, signature, text, watermark, or shadow. The perch is implied by toe posture and never drawn. The whole bird must fit inside the frame with generous padding. Exactly two wings, two legs, one head, one beak, and one tail. For perched pose use one folded wing and visible small feet; for flight use two naturally extended wings and tucked or swept-back feet.
+
+{addendum.strip()}""".strip()
+
+
+class BirdFrameService:
+    def __init__(self, store: Store):
+        self.store = store
+        self.events: set[asyncio.Queue[int]] = set()
+        self.render_lock = asyncio.Lock()
+
+    async def render(self) -> dict[str, Any]:
+        async with self.render_lock:
+            settings = self.store.get_settings()
+            detections = self.store.recent_detections(settings.collage_hours)
+            grouped = group_detections(detections)
+            if settings.display_mode == "latest_visitor":
+                image, species = latest_visitor_image(grouped, settings, self.store.art_dir)
+            else:
+                image, species = collage_image(grouped, settings, self.store.art_dir)
+            temporary = self.store.art_dir / f"composition-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%f')}.jpg"
+            image.save(temporary, "JPEG", quality=94, subsampling=0, optimize=True)
+            digest = hashlib.sha256(temporary.read_bytes()).hexdigest()
+            identifier = self.store.add_composition(mode=settings.display_mode, width=image.width, height=image.height,
+                                                    path=temporary, sha256=digest, species=species)
+            row = self.store.current_composition()
+            assert row and row["id"] == identifier
+            for queue in list(self.events):
+                queue.put_nowait(row["revision"])
+            return row
+
+    async def ingest(self, payload: DetectionCreate, *, render: bool = True) -> Detection | None:
+        result = self.store.add_detection(payload)
+        if result and render:
+            await self.render()
+        return result
+
+    async def generate_assets(self, job_id: int, request: JobRequest) -> None:
+        settings = self.store.get_settings()
+        secret = self.store.secret("openrouter_api_key")
+        if not secret:
+            self.store.update_job(job_id, status="failed", error="Configure an OpenRouter API key first")
+            return
+        if not request.model:
+            self.store.update_job(job_id, status="failed", error="Choose an OpenRouter image model")
+            return
+        self.store.update_job(job_id, status="running")
+        client = OpenRouterClient(secret)
+        generated: list[str] = []
+        try:
+            for entry in request.species:
+                common = entry.get("common_name", "").strip()
+                scientific = entry.get("scientific_name", "").strip() or common
+                if not common:
+                    continue
+                slug = "".join(char.lower() if char.isalnum() else "-" for char in scientific).strip("-")
+                target = self.store.art_dir / "species" / slug
+                target.mkdir(parents=True, exist_ok=True)
+                poses = ("perched", "in flight with wings spread") if request.poses == "both" else ("perched",)
+                for requested_pose in poses:
+                    response = await client.generate(model=request.model, prompt=style_prompt(common, scientific, requested_pose, settings.custom_prompt_addendum), size="1024x1024")
+                    with Image.open(__import__("io").BytesIO(response.content)) as source:
+                        asset = source.convert("RGBA")
+                    if asset.getchannel("A").getextrema()[0] == 255:
+                        asset = remove_paper_background(asset, settings.paper_tone)
+                    pose_name = "flight" if requested_pose.startswith("in flight") else "perched"
+                    asset.save(target / f"{pose_name}.png", "PNG", optimize=True)
+                    generated.append(f"{common}:{pose_name}")
+            self.store.update_job(job_id, status="completed", result={"generated": generated})
+            await self.render()
+        except (AdapterError, OSError, ValueError) as exc:
+            self.store.update_job(job_id, status="failed", error=str(exc))
+        finally:
+            await client.aclose()
+
+
+async def source_worker(service: BirdFrameService, stop: asyncio.Event) -> None:
+    """Conservative source worker; all ingest paths still share deduplication and rendering."""
+    cursor: str | None = None
+    last_source = ""
+    while not stop.is_set():
+        settings = service.store.get_settings()
+        if settings.detection_source != last_source:
+            cursor, last_source = None, settings.detection_source
+        try:
+            if settings.detection_source == "birdweather":
+                token = service.store.secret("birdweather_token")
+                if token:
+                    client = BirdWeatherClient(token)
+                    result = await client.poll(cursor=cursor, limit=100)
+                    cursor = result.cursor
+                    changed = False
+                    for item in result.detections:
+                        created = service.store.add_detection(DetectionCreate(
+                            common_name=item.common_name, scientific_name=item.scientific_name or "",
+                            species_code=item.species_code or "", confidence=item.confidence or 0,
+                            detected_at=item.occurred_at, source_type="birdweather", source_event_id=item.external_id,
+                        ))
+                        changed = changed or created is not None
+                    await client.aclose()
+                    if changed:
+                        await service.render()
+                await asyncio.wait_for(stop.wait(), timeout=settings.birdweather_poll_seconds)
+            else:
+                # Reconnect after each event so a source change is observed promptly.
+                client = BirdNETGoClient(settings.birdnet_go_url)
+                stream = client.detections()
+                try:
+                    item = await asyncio.wait_for(anext(stream), timeout=10)
+                    await service.ingest(DetectionCreate(
+                        common_name=item.common_name, scientific_name=item.scientific_name or "",
+                        species_code=item.species_code or "", confidence=item.confidence or 0,
+                        detected_at=item.occurred_at, source_type="birdnet_go", source_event_id=item.external_id,
+                    ))
+                except TimeoutError:
+                    pass
+                finally:
+                    await stream.aclose()
+                    await client.aclose()
+        except (AdapterError, OSError, asyncio.TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            pass
+
+
+def create_app(data_dir: Path | None = None) -> FastAPI:
+    store = Store(data_dir or data_directory())
+    service = BirdFrameService(store)
+    stop_sources = asyncio.Event()
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        if not store.current_composition():
+            await service.render()
+        worker = asyncio.create_task(source_worker(service, stop_sources))
+        try:
+            yield
+        finally:
+            stop_sources.set()
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
+
+    app = FastAPI(title="BirdFrame", version="0.1.0", lifespan=lifespan)
+    app.state.store = store
+    app.state.service = service
+    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+    def display_guard(request: Request) -> None:
+        settings = store.get_settings()
+        if not settings.display_api_enabled:
+            raise HTTPException(status_code=404, detail="Display API is disabled")
+        if settings.display_api_require_token:
+            supplied = request.headers.get("Authorization", "").removeprefix("Bearer ") or request.query_params.get("token", "")
+            if not supplied or supplied != store.secret("display_api_token"):
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Display token is required")
+
+    @app.get("/api/v1/health")
+    async def health() -> dict[str, object]:
+        current = store.current_composition()
+        return {"status": "ok", "version": "0.1.0", "composition_revision": current["revision"] if current else None}
+
+    @app.get("/api/v1/settings", response_model=SettingsResponse)
+    async def get_settings() -> SettingsResponse:
+        return store.get_settings()
+
+    @app.put("/api/v1/settings", response_model=SettingsResponse)
+    async def put_settings(payload: SettingsUpdate) -> SettingsResponse:
+        result = store.save_settings(payload)
+        await service.render()
+        return result
+
+    @app.get("/api/v1/detections", response_model=list[Detection])
+    async def detections(hours: int = 24) -> list[Detection]:
+        return store.recent_detections(max(1, min(hours, 8760)))
+
+    @app.post("/api/v1/detections", response_model=Detection, status_code=201)
+    async def create_detection(payload: DetectionCreate) -> Detection:
+        result = await service.ingest(payload)
+        if result is None:
+            raise HTTPException(status_code=409, detail="Duplicate source event")
+        return result
+
+    @app.post("/api/v1/compositions/rebuild", response_model=CompositionSummary)
+    async def rebuild_composition() -> CompositionSummary:
+        return composition_summary(await service.render())
+
+    @app.get("/api/v1/compositions/current", response_model=CompositionSummary)
+    async def current_composition() -> CompositionSummary:
+        row = store.current_composition()
+        if not row:
+            row = await service.render()
+        return composition_summary(row)
+
+    @app.get("/api/v1/display/current.jpg", dependencies=[Depends(display_guard)])
+    async def display_jpeg(request: Request) -> Response:
+        row = store.current_composition() or await service.render()
+        path = Path(row["path"])
+        etag = f'"{row["sha256"]}"'
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": etag, "X-BirdFrame-Revision": str(row["revision"])})
+        return FileResponse(path, media_type="image/jpeg", headers={
+            "ETag": etag, "X-BirdFrame-Revision": str(row["revision"]),
+            "Cache-Control": "no-cache, must-revalidate",
+        })
+
+    @app.get("/api/v1/display/current.json", dependencies=[Depends(display_guard)])
+    async def display_json(request: Request) -> dict[str, object]:
+        row = store.current_composition() or await service.render()
+        base = str(request.base_url).rstrip("/")
+        return composition_summary(row).model_dump(mode="json") | {"image_url": f"{base}/api/v1/display/current.jpg"}
+
+    @app.get("/api/v1/display/events", dependencies=[Depends(display_guard)])
+    async def display_events() -> StreamingResponse:
+        queue: asyncio.Queue[int] = asyncio.Queue()
+        service.events.add(queue)
+        async def stream() -> AsyncIterator[str]:
+            try:
+                current = store.current_composition()
+                if current:
+                    yield f"event: composition\ndata: {{\"revision\":{current['revision']}}}\n\n"
+                while True:
+                    revision = await queue.get()
+                    yield f"event: composition\ndata: {{\"revision\":{revision}}}\n\n"
+            finally:
+                service.events.discard(queue)
+        return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/v1/jobs")
+    async def jobs() -> list[dict[str, object]]:
+        return store.jobs()
+
+    @app.post("/api/v1/sources/test")
+    async def test_source(payload: SourceTestRequest) -> dict[str, object]:
+        try:
+            if payload.source == "birdweather":
+                token = payload.token or store.secret("birdweather_token")
+                if not token:
+                    raise HTTPException(status_code=400, detail="Enter a BirdWeather station token")
+                client = BirdWeatherClient(token)
+            else:
+                settings = store.get_settings()
+                client = BirdNETGoClient(payload.url or settings.birdnet_go_url)
+            health = await client.health()
+            await client.aclose()
+            return {"available": health.available, "detail": health.detail}
+        except AdapterError as exc:
+            return {"available": False, "detail": str(exc)}
+
+    @app.get("/api/v1/art/occurrences")
+    async def occurrences() -> list[dict[str, object]]:
+        settings = store.get_settings()
+        # BirdWeather history is the zero-extra-dependency provider.  Scores are
+        # intentionally labelled frequency rather than ecological probability.
+        items = group_detections(store.recent_detections(24 * 365, limit=5000))
+        maximum = max((item.count for item in items), default=1)
+        return [{"common_name": item.common_name, "scientific_name": item.scientific_name,
+                 "score": item.count / maximum, "score_label": "station_frequency", "detections": item.count}
+                for item in items if item.count / maximum >= settings.occurrence_threshold][:settings.occurrence_max_species]
+
+    @app.get("/api/v1/art/packages/catalog")
+    async def package_catalog() -> list[dict[str, object]]:
+        url = store.get_settings().package_catalog_url
+        if not url:
+            return []
+        try:
+            return await fetch_catalog(url)
+        except PackageError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.post("/api/v1/art/packages/install", status_code=202)
+    async def package_install(payload: PackageInstallRequest) -> dict[str, int]:
+        url = store.get_settings().package_catalog_url
+        if not url:
+            raise HTTPException(status_code=400, detail="Configure an artwork package catalog URL first")
+        try:
+            entries = await fetch_catalog(url)
+        except PackageError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        entry = next((item for item in entries if item["id"] == payload.package_id), None)
+        if not entry:
+            raise HTTPException(status_code=404, detail="Package was not found in the configured catalog")
+        job_id = store.create_job("package_install", {"package_id": payload.package_id})
+        async def install() -> None:
+            store.update_job(job_id, status="running")
+            try:
+                result = await install_package(entry, store.art_dir / "packages")
+                store.update_job(job_id, status="completed", result=result)
+                await service.render()
+            except PackageError as exc:
+                store.update_job(job_id, status="failed", error=str(exc))
+        asyncio.create_task(install())
+        return {"id": job_id}
+
+    @app.post("/api/v1/art/generate", status_code=202)
+    async def generate_art(payload: JobRequest) -> dict[str, int]:
+        job_id = store.create_job("art_generation", payload.model_dump())
+        asyncio.create_task(service.generate_assets(job_id, payload))
+        return {"id": job_id}
+
+    @app.get("/api/v1/openrouter/models")
+    async def openrouter_models() -> list[dict[str, object]]:
+        key = store.secret("openrouter_api_key")
+        if not key:
+            raise HTTPException(status_code=400, detail="Configure an OpenRouter API key first")
+        client = OpenRouterClient(key)
+        try:
+            return [{"id": item.id, "name": item.name, "description": item.description,
+                     "pricing": item.pricing, "supported_parameters": item.supported_parameters} for item in await client.image_models()]
+        finally:
+            await client.aclose()
+
+    @app.post("/api/v1/tv/push")
+    async def push_tv() -> dict[str, object]:
+        settings = store.get_settings()
+        if not settings.tv_host:
+            raise HTTPException(status_code=400, detail="Configure a Samsung TV host first")
+        row = store.current_composition() or await service.render()
+        tv = SamsungFrameClient(settings.tv_host, token=store.secret("samsung_token"))
+        try:
+            result = await tv.upload_and_select(
+                Path(row["path"]).read_bytes(), matte=settings.tv_matte,
+            )
+        except ProviderUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except AdapterError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        previous = store.record_tv_upload(row["id"], result.content_id)
+        deleted_previous = False
+        if previous:
+            try:
+                await tv.delete_owned(previous)
+                deleted_previous = True
+            except AdapterError:
+                # The new art is already selected; retrying cleanup must not undo it.
+                pass
+        return {"content_id": result.content_id, "previous_owned_content_id": previous,
+                "deleted_previous": deleted_previous, "revision": row["revision"]}
+
+    static = frontend_directory()
+    if static.exists():
+        app.mount("/assets", StaticFiles(directory=static / "assets"), name="assets")
+        @app.get("/{path:path}", include_in_schema=False)
+        async def frontend(path: str) -> Response:
+            target = static / path
+            if path and target.is_file():
+                return FileResponse(target)
+            return FileResponse(static / "index.html")
+    else:
+        @app.get("/", include_in_schema=False)
+        async def placeholder() -> JSONResponse:
+            return JSONResponse({"name": "BirdFrame", "message": "Frontend build is not present yet", "docs": "/docs"})
+    return app
+
+
+app = create_app()

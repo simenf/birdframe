@@ -1,0 +1,49 @@
+# BirdFrame installation. Start BirdWeather mode with:
+#   docker compose up -d
+# Start local microphone mode with:
+#   docker compose --profile local-audio up -d
+#
+# Both services use host networking to make Samsung TV discovery and
+# Wake-on-LAN dependable on Linux. Therefore BIRDFRAME_PORT and
+# BIRDNET_GO_PORT must not already be in use on the host. Host networking is
+# not supported for hardware discovery on Docker Desktop.
+services:
+  birdframe:
+    image: ghcr.io/birdframe-project/birdframe:${BIRDFRAME_VERSION:-0.1.0}
+    # Building locally makes the repository installable before a registry
+    # release exists; Compose still tags the result with the image above.
+    build: .
+    container_name: birdframe
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+      BIRDFRAME_PORT: ${BIRDFRAME_PORT:-8765}
+      BIRDFRAME_DATA_DIR: /data
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      BIRDNET_GO_URL: ${BIRDNET_GO_URL:-http://127.0.0.1:8080}
+    volumes:
+      - ${BIRDFRAME_DATA_DIR:-./data}:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:${BIRDFRAME_PORT:-8765}/api/v1/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  birdnet-go:
+    image: ${BIRDNET_GO_IMAGE:-ghcr.io/tphakala/birdnet-go:nightly-20260524}
+    container_name: birdframe-birdnet-go
+    profiles: ["local-audio"]
+    restart: unless-stopped
+    network_mode: host
+    # Linux only. Remove this mapping only when using an RTSP source instead
+    # of a local sound device, and configure that source in BirdNET-Go.
+    devices:
+      - /dev/snd:/dev/snd
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+      BIRDNET_GO_PORT: ${BIRDNET_GO_PORT:-8080}
+    volumes:
+      - ${BIRDNET_GO_DATA_DIR:-./birdnet-go-data}:/data

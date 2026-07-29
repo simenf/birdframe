@@ -1,0 +1,10 @@
+fastapi<1,>=0.115
+uvicorn[standard]<1,>=0.30
+httpx<1,>=0.27
+pillow<12,>=10.4
+cryptography<46,>=43
+samsungtvws<4,>=2.7
+
+[dev]
+pytest<9,>=8.3
+pytest-asyncio<1,>=0.24

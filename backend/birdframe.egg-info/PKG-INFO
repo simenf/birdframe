@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: birdframe
+Version: 0.1.0
+Summary: Self-hosted bird detection artwork display for Samsung The Frame
+Requires-Python: >=3.12
+Requires-Dist: fastapi<1,>=0.115
+Requires-Dist: uvicorn[standard]<1,>=0.30
+Requires-Dist: httpx<1,>=0.27
+Requires-Dist: pillow<12,>=10.4
+Requires-Dist: cryptography<46,>=43
+Requires-Dist: samsungtvws<4,>=2.7
+Provides-Extra: dev
+Requires-Dist: pytest<9,>=8.3; extra == "dev"
+Requires-Dist: pytest-asyncio<1,>=0.24; extra == "dev"
