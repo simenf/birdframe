@@ -76,6 +76,7 @@ class BirdFrameService:
         self.store = store
         self.events: set[asyncio.Queue[int]] = set()
         self.render_lock = asyncio.Lock()
+        self.tv_lock = asyncio.Lock()
 
     def log(self, level: str, message: str) -> None:
         self.store.log(level, message)
@@ -106,6 +107,45 @@ class BirdFrameService:
         if result and render:
             await self.render()
         return result
+
+    async def push_to_tv(self, row: dict[str, Any] | None = None) -> dict[str, object]:
+        """Upload and immediately select the composition in Samsung Art Mode."""
+        settings = self.store.get_settings()
+        if not settings.tv_host:
+            raise AdapterError("Configure a Samsung TV host first")
+        row = row or self.store.current_composition() or await self.render()
+        async with self.tv_lock:
+            tv = SamsungFrameClient(settings.tv_host, token=self.store.secret("samsung_token"))
+            result = await tv.upload_and_select(Path(row["path"]).read_bytes(), matte=settings.tv_matte, show=True)
+            previous = self.store.record_tv_upload(row["id"], result.content_id)
+            deleted_previous = False
+            if previous:
+                try:
+                    await tv.delete_owned(previous)
+                    deleted_previous = True
+                except AdapterError:
+                    pass
+            self.log("info", f"TV updated to composition revision {row['revision']} and selected in Art Mode")
+            return {"content_id": result.content_id, "previous_owned_content_id": previous,
+                    "deleted_previous": deleted_previous, "revision": row["revision"]}
+
+    async def sync_tv_if_due(self) -> None:
+        """Keep the Frame on the newest composition without polling the TV UI."""
+        settings = self.store.get_settings()
+        if not settings.tv_auto_update_enabled or not settings.tv_host:
+            return
+        row = self.store.current_composition()
+        if not row:
+            return
+        previous = self.store.latest_tv_upload()
+        if previous and previous["composition_id"] == row["id"]:
+            return
+        if previous:
+            last_push = datetime.fromisoformat(previous["created_at"])
+            elapsed = (datetime.now(UTC) - last_push.astimezone(UTC)).total_seconds()
+            if elapsed < settings.tv_update_minutes * 60:
+                return
+        await self.push_to_tv(row)
 
     async def generate_assets(self, job_id: int, request: JobRequest) -> None:
         settings = self.store.get_settings()
@@ -226,6 +266,19 @@ async def source_worker(service: BirdFrameService, stop: asyncio.Event) -> None:
             await pause(5)
 
 
+async def tv_sync_worker(service: BirdFrameService, stop: asyncio.Event) -> None:
+    """Select a newly rendered composition once the configured update cadence permits it."""
+    while not stop.is_set():
+        try:
+            await service.sync_tv_if_due()
+        except (AdapterError, OSError, ProviderUnavailable) as exc:
+            service.log("warning", f"Automatic TV update deferred: {type(exc).__name__}")
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=30)
+        except asyncio.TimeoutError:
+            pass
+
+
 def create_app(data_dir: Path | None = None) -> FastAPI:
     store = Store(data_dir or data_directory())
     service = BirdFrameService(store)
@@ -236,12 +289,14 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         if not store.current_composition():
             await service.render()
         worker = asyncio.create_task(source_worker(service, stop_sources))
+        tv_worker = asyncio.create_task(tv_sync_worker(service, stop_sources))
         try:
             yield
         finally:
             stop_sources.set()
             worker.cancel()
-            await asyncio.gather(worker, return_exceptions=True)
+            tv_worker.cancel()
+            await asyncio.gather(worker, tv_worker, return_exceptions=True)
 
     app = FastAPI(title="BirdFrame", version="0.1.0", lifespan=lifespan)
     app.state.store = store
@@ -424,30 +479,13 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
 
     @app.post("/api/v1/tv/push")
     async def push_tv() -> dict[str, object]:
-        settings = store.get_settings()
-        if not settings.tv_host:
-            raise HTTPException(status_code=400, detail="Configure a Samsung TV host first")
-        row = store.current_composition() or await service.render()
-        tv = SamsungFrameClient(settings.tv_host, token=store.secret("samsung_token"))
         try:
-            result = await tv.upload_and_select(
-                Path(row["path"]).read_bytes(), matte=settings.tv_matte,
-            )
+            return await service.push_to_tv()
         except ProviderUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except AdapterError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        previous = store.record_tv_upload(row["id"], result.content_id)
-        deleted_previous = False
-        if previous:
-            try:
-                await tv.delete_owned(previous)
-                deleted_previous = True
-            except AdapterError:
-                # The new art is already selected; retrying cleanup must not undo it.
-                pass
-        return {"content_id": result.content_id, "previous_owned_content_id": previous,
-                "deleted_previous": deleted_previous, "revision": row["revision"]}
+            status_code = 400 if "Configure a Samsung TV host" in str(exc) else 502
+            raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
     static = frontend_directory()
     if static.exists():

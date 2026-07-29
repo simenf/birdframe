@@ -23,6 +23,7 @@ class PublicSettings(BaseModel):
     tv_host: str = ""
     tv_mac: str = ""
     tv_matte: str = "none"
+    tv_auto_update_enabled: bool = True
     tv_wake_enabled: bool = False
     tv_quiet_hours_start: str = ""
     tv_quiet_hours_end: str = ""

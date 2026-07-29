@@ -24,6 +24,12 @@ explicit **allow wake** option. Wake-on-LAN is disabled until selected. A burst
 of detections is coalesced, so normal operation sends no more than one new
 composition per configured interval (five minutes by default).
 
+**Automatically select new artwork on TV** is enabled by default. BirdFrame
+checks for a newer rendered composition, uploads it at the configured cadence,
+and calls Samsung Art Mode's `select_image(..., show=true)` so the Frame
+switches to it immediately. Turn this off to retain manual **Send current art
+to TV** control.
+
 ## Diagnostics
 
 Test connection, upload, select, and delete separately in Settings. For a

@@ -221,3 +221,8 @@ class Store:
             db.execute("INSERT OR IGNORE INTO tv_uploads(composition_id,content_id,created_at) VALUES(?,?,?)", (composition_id, content_id, utcnow()))
             db.execute("UPDATE compositions SET tv_confirmed=1 WHERE id=?", (composition_id,))
         return old["content_id"] if old and old["content_id"] != content_id else None
+
+    def latest_tv_upload(self) -> dict[str, Any] | None:
+        with self.connection() as db:
+            row = db.execute("SELECT composition_id,content_id,created_at FROM tv_uploads ORDER BY id DESC LIMIT 1").fetchone()
+        return dict(row) if row else None
