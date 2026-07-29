@@ -1,9 +1,10 @@
 import base64
+import json
 
 import httpx
 import pytest
 
-from birdframe.adapters import BirdNETGoClient, BirdWeatherClient, OpenRouterClient, SamsungFrameClient
+from birdframe.adapters import BirdNETGoClient, BirdWeatherClient, OpenRouterClient, PublicBirdWeatherClient, SamsungFrameClient
 
 
 def async_client(handler):
@@ -39,6 +40,23 @@ async def test_birdweather_polls_avian_cursor_and_normalizes_oldest_first():
     result = await BirdWeatherClient("a token", base_url="http://test/api/v1", client=client).poll(cursor="40", limit=10)
     assert [item.common_name for item in result.detections] == ["Earlier", "Later"]
     assert result.cursor == "42"
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_public_birdweather_polls_a_public_station_without_a_token():
+    async def handler(request):
+        assert request.url.path == "/graphql"
+        body = json.loads(request.content)
+        assert body["variables"] == {"stationIds": ["2505"], "first": 10}
+        assert "classifications" in body["query"]
+        return httpx.Response(200, json={"data": {"detections": {"nodes": [
+            {"id": "42", "timestamp": "2026-01-02T10:00:00+00:00", "confidence": .8, "coords": {"lat": 59.9, "lon": 10.7}, "species": {"id": "2", "commonName": "Later", "scientificName": "Laterus birdus"}},
+            {"id": "41", "timestamp": "2026-01-02T09:00:00+00:00", "confidence": .7, "coords": {"lat": 59.8, "lon": 10.6}, "species": {"id": "1", "commonName": "Earlier", "scientificName": "Earlierus birdus"}},
+        ]}}})
+    client = async_client(handler)
+    result = await PublicBirdWeatherClient(2505, base_url="http://test/graphql", client=client).poll(limit=10)
+    assert [(item.provider, item.external_id, item.common_name) for item in result.detections] == [("birdweather-public", "41", "Earlier"), ("birdweather-public", "42", "Later")]
     await client.aclose()
 
 

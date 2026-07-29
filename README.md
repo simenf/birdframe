@@ -46,8 +46,9 @@ BirdNET-Go administration page linked from BirdFrame. See
 
 - Audio stays in BirdNET-Go on your host. BirdFrame does not send microphone
   audio to OpenRouter.
-- BirdWeather mode asks BirdWeather only for the station detections authorized
-  by your token.
+- Public BirdWeather mode reads public detections using a station ID (for
+  example `2505`) and needs no credential. Private-station mode asks
+  BirdWeather only for the detections authorized by your token.
 - Artwork generation sends text prompts and only the references you explicitly
   select to your chosen OpenRouter model/provider.
 - Samsung control and image upload occur over your local network.

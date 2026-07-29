@@ -128,6 +128,79 @@ class BirdWeatherClient:
         return Detection("birdweather", str(data.get("id") or f"{name}:{timestamp.isoformat()}"), timestamp, name, species.get("scientificName"), _float(data.get("confidence")), str(species["id"]) if species.get("id") is not None else None, _float(data.get("lat")), _float(data.get("lon")), data)
 
 
+class PublicBirdWeatherClient:
+    """Read recent avian detections from a public BirdWeather station.
+
+    BirdWeather's GraphQL API exposes public station data by numeric station ID;
+    unlike the REST station endpoints it does not require the station owner's
+    authentication token.  We deliberately re-read the small latest window on
+    every poll and rely on the application's source-event de-duplication.  A
+    Relay cursor would advance into older rows after the first poll and miss
+    newly arriving detections in the default newest-first ordering.
+    """
+
+    QUERY = """
+    query PublicStationDetections($stationIds: [ID!], $first: Int) {
+      detections(first: $first, stationIds: $stationIds, classifications: [\"avian\"]) {
+        nodes {
+          id timestamp confidence
+          coords { lat lon }
+          species { id commonName scientificName }
+        }
+      }
+    }
+    """
+
+    def __init__(self, station_id: int, *, base_url: str = "https://app.birdweather.com/graphql", client: httpx.AsyncClient | None = None) -> None:
+        if station_id < 1:
+            raise ValueError("public station ID must be positive")
+        self.station_id = station_id
+        self.base_url = base_url
+        self._client = client or httpx.AsyncClient(timeout=20)
+        self._owns = client is None
+
+    async def aclose(self) -> None:
+        if self._owns:
+            await self._client.aclose()
+
+    async def health(self) -> Health:
+        try:
+            await self.poll(limit=1)
+            return Health(True)
+        except AdapterError as exc:
+            return Health(False, str(exc))
+
+    async def poll(self, *, limit: int = 100) -> PollResult:
+        if not 1 <= limit <= 100:
+            raise ValueError("limit must be from 1 to 100")
+        try:
+            response = await self._client.post(self.base_url, json={"query": self.QUERY, "variables": {"stationIds": [str(self.station_id)], "first": limit}})
+            response.raise_for_status()
+            body = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise AdapterError(f"Public BirdWeather polling failed: {exc}") from exc
+        errors = body.get("errors")
+        if errors:
+            detail = errors[0].get("message", "GraphQL query failed") if isinstance(errors, list) and errors and isinstance(errors[0], dict) else "GraphQL query failed"
+            raise AdapterError(f"Public BirdWeather rejected the station request: {detail}")
+        connection = body.get("data", {}).get("detections", {}) if isinstance(body.get("data"), dict) else {}
+        rows = connection.get("nodes", []) if isinstance(connection, dict) else []
+        if not isinstance(rows, list):
+            raise AdapterError("Public BirdWeather response has invalid detections")
+        detections = tuple(sorted((self._parse(row) for row in rows), key=lambda item: item.occurred_at))
+        return PollResult(detections, None)
+
+    @staticmethod
+    def _parse(data: dict[str, Any]) -> Detection:
+        species = data.get("species") if isinstance(data.get("species"), dict) else {}
+        name = species.get("commonName")
+        if not isinstance(name, str) or not name:
+            raise AdapterError("Public BirdWeather detection misses species.commonName")
+        coords = data.get("coords") if isinstance(data.get("coords"), dict) else {}
+        timestamp = _timestamp(data.get("timestamp"))
+        return Detection("birdweather-public", str(data.get("id") or f"{name}:{timestamp.isoformat()}"), timestamp, name, species.get("scientificName"), _float(data.get("confidence")), str(species["id"]) if species.get("id") is not None else None, _float(coords.get("lat")), _float(coords.get("lon")), data)
+
+
 class OpenRouterClient:
     """Client for OpenRouter model catalog and dedicated image endpoint."""
     def __init__(self, api_key: str, *, base_url: str = "https://openrouter.ai/api/v1/", client: httpx.AsyncClient | None = None) -> None:

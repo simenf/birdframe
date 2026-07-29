@@ -12,8 +12,9 @@ class PublicSettings(BaseModel):
     longitude: float | None = None
     timezone: str = "UTC"
     language: str = "en"
-    detection_source: Literal["birdweather", "birdnet_go"] = "birdweather"
+    detection_source: Literal["birdweather", "birdweather_public", "birdnet_go"] = "birdweather_public"
     birdnet_go_url: str = "http://birdnet-go:8080"
+    birdweather_public_station_id: int | None = Field(default=None, ge=1)
     birdweather_poll_seconds: int = Field(default=15, ge=10, le=3600)
     display_mode: Literal["collage", "latest_visitor"] = "collage"
     collage_hours: int = Field(default=24, ge=1, le=8760)
@@ -63,7 +64,7 @@ class DetectionCreate(BaseModel):
     species_code: str = Field(default="", max_length=64)
     confidence: float = Field(default=1, ge=0, le=1)
     detected_at: datetime | None = None
-    source_type: Literal["birdweather", "birdnet_go", "manual"] = "manual"
+    source_type: Literal["birdweather", "birdweather_public", "birdnet_go", "manual"] = "manual"
     source_event_id: str = ""
 
 
@@ -95,6 +96,7 @@ class PackageInstallRequest(BaseModel):
 
 
 class SourceTestRequest(BaseModel):
-    source: Literal["birdweather", "birdnet_go"]
+    source: Literal["birdweather", "birdweather_public", "birdnet_go"]
     url: str = ""
     token: str = ""
+    station_id: int | None = Field(default=None, ge=1)

@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
-from .adapters import AdapterError, BirdNETGoClient, BirdWeatherClient, OpenRouterClient, ProviderUnavailable, SamsungFrameClient
+from .adapters import AdapterError, BirdNETGoClient, BirdWeatherClient, OpenRouterClient, ProviderUnavailable, PublicBirdWeatherClient, SamsungFrameClient
 from .compositor import collage_image, group_detections, latest_visitor_image
 from .packages import PackageError, fetch_catalog, install_package
 from .schemas import (CompositionSummary, Detection, DetectionCreate, JobRequest, PackageInstallRequest,
@@ -143,6 +143,14 @@ async def source_worker(service: BirdFrameService, stop: asyncio.Event) -> None:
     """Conservative source worker; all ingest paths still share deduplication and rendering."""
     cursor: str | None = None
     last_source = ""
+
+    async def pause(seconds: int) -> None:
+        """Wait for a source poll interval without allowing its timeout to kill the worker."""
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=seconds)
+        except asyncio.TimeoutError:
+            pass
+
     while not stop.is_set():
         settings = service.store.get_settings()
         if settings.detection_source != last_source:
@@ -165,7 +173,23 @@ async def source_worker(service: BirdFrameService, stop: asyncio.Event) -> None:
                     await client.aclose()
                     if changed:
                         await service.render()
-                await asyncio.wait_for(stop.wait(), timeout=settings.birdweather_poll_seconds)
+                await pause(settings.birdweather_poll_seconds)
+            elif settings.detection_source == "birdweather_public":
+                if settings.birdweather_public_station_id:
+                    client = PublicBirdWeatherClient(settings.birdweather_public_station_id)
+                    result = await client.poll(limit=100)
+                    changed = False
+                    for item in result.detections:
+                        created = service.store.add_detection(DetectionCreate(
+                            common_name=item.common_name, scientific_name=item.scientific_name or "",
+                            species_code=item.species_code or "", confidence=item.confidence or 0,
+                            detected_at=item.occurred_at, source_type="birdweather_public", source_event_id=item.external_id,
+                        ))
+                        changed = changed or created is not None
+                    await client.aclose()
+                    if changed:
+                        await service.render()
+                await pause(settings.birdweather_poll_seconds)
             else:
                 # Reconnect after each event so a source change is observed promptly.
                 client = BirdNETGoClient(settings.birdnet_go_url)
@@ -183,9 +207,7 @@ async def source_worker(service: BirdFrameService, stop: asyncio.Event) -> None:
                     await stream.aclose()
                     await client.aclose()
         except (AdapterError, OSError, asyncio.TimeoutError):
-            await asyncio.wait_for(stop.wait(), timeout=5)
-        except asyncio.TimeoutError:
-            pass
+            await pause(5)
 
 
 def create_app(data_dir: Path | None = None) -> FastAPI:
@@ -302,6 +324,11 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
                 if not token:
                     raise HTTPException(status_code=400, detail="Enter a BirdWeather station token")
                 client = BirdWeatherClient(token)
+            elif payload.source == "birdweather_public":
+                station_id = payload.station_id or store.get_settings().birdweather_public_station_id
+                if not station_id:
+                    raise HTTPException(status_code=400, detail="Enter a public BirdWeather station ID")
+                client = PublicBirdWeatherClient(station_id)
             else:
                 settings = store.get_settings()
                 client = BirdNETGoClient(payload.url or settings.birdnet_go_url)

@@ -35,3 +35,15 @@ def test_display_api_token_is_separate_from_settings_secrets(tmp_path: Path):
         assert "display_api_token" not in saved.json()
         assert client.get("/api/v1/display/current.jpg").status_code == 401
         assert client.get("/api/v1/display/current.jpg?token=this-is-a-long-display-token").status_code == 200
+
+
+def test_public_birdweather_station_id_is_saved_without_a_secret(tmp_path: Path):
+    app = create_app(tmp_path)
+    with TestClient(app) as client:
+        settings = client.get("/api/v1/settings").json()
+        settings.update({"detection_source": "birdweather_public", "birdweather_public_station_id": 2505})
+        saved = client.put("/api/v1/settings", json=settings)
+        assert saved.status_code == 200
+        assert saved.json()["detection_source"] == "birdweather_public"
+        assert saved.json()["birdweather_public_station_id"] == 2505
+        assert saved.json()["has_birdweather_token"] is False
