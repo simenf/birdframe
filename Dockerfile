@@ -4,7 +4,10 @@
 FROM node:22-bookworm-slim AS frontend-build
 WORKDIR /src/frontend
 COPY frontend/package*.json ./
-RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+# npm 10 in the Node 22 image correctly resolves optional native Rollup
+# packages across Linux architectures; `npm ci` rejects the cross-platform
+# lockfile generated on macOS before it gets that chance.
+RUN npm install --no-audit --no-fund
 COPY frontend/ ./
 RUN npm run build
 
