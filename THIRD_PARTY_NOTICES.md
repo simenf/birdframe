@@ -20,3 +20,6 @@ the exact versioned dependency notices generated from its lockfiles.
 Artwork packages are not covered by the BirdFrame project license unless their
 own manifest explicitly says so. Every package must include `LICENSES/` and
 `attribution.json`.
+
+The original AvianVisitors `cutouts/` assets are optional bird-detail/fallback
+images and are not required by BirdFrame's collage-compatible pack format.

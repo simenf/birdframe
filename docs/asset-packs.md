@@ -14,6 +14,8 @@ my-region/
 ├── illustrations/
 │   ├── turdus-merula.png
 │   └── turdus-merula-2.png
+├── cutouts/                   # optional AvianVisitors photo/detail assets
+│   └── turdus-merula.png
 ├── sketches/                 # optional pencil versions
 │   ├── turdus-merula.png
 │   └── turdus-merula-2.png
@@ -33,6 +35,19 @@ mask-aware placement.
 `dims.json` and `masks.json` are optional for generated packs, but retaining
 them from an AvianVisitors source pack gives the closest original layout.
 
+## What is `cutouts/`?
+
+In the original AvianVisitors repository, `cutouts/` contains transparent,
+background-removed source/fallback images. Its API uses these for bird-detail
+lookups and as a local fallback when an illustration is unavailable. The
+collage does **not** use `cutouts/`; its silhouettes and placement data come
+from `illustrations/`, `dims.json`, and `masks.json`.
+
+BirdFrame therefore does not require or package `cutouts/` by default. Keep it
+only when you are preparing a full AvianVisitors repository contribution or
+want to preserve the original bird-detail fallback behavior. It is optional
+metadata for a BirdFrame pack and does not replace the illustration files.
+
 ## Build a ZIP
 
 After obtaining or preparing a licensed source directory:
@@ -44,7 +59,7 @@ python scripts/create-asset-pack.py \
   --id my-region
 ```
 
-The script copies only the artwork, compatibility tables, attribution,
+The script copies only the collage artwork, compatibility tables, attribution,
 license directories, and a generated `manifest.json`. It does not include Git
 metadata, application code, model files, or unrelated repository files.
 

@@ -5,7 +5,9 @@ Place compact, usable BirdFrame packs here. The Docker build seeds them into
 
 Use `scripts/import-illustration-packs.sh /path/to/downloaded/packs` to turn
 the downloaded AvianVisitors repositories into clean packs containing only
-`illustrations`, `sketches`, `dims.json`, and `masks.json`. The source images
+`illustrations`, `sketches`, `dims.json`, and `masks.json`. The original
+`cutouts/` directory is a separate bird-detail/fallback asset and is not
+needed by the BirdFrame collage. The source images
 are deliberately ignored by Git: they are large third-party artwork assets and
 should be obtained from their upstream repositories or a properly licensed
 release archive. Only this README and the ignore rule are tracked in a clean
