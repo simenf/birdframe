@@ -50,6 +50,20 @@ def test_public_birdweather_station_id_is_saved_without_a_secret(tmp_path: Path)
         assert saved.json()["has_birdweather_token"] is False
 
 
+def test_recent_birds_are_deduplicated_and_include_an_image(tmp_path: Path):
+    app = create_app(tmp_path)
+    with TestClient(app) as client:
+        for identifier, common_name, scientific_name in (("one", "Common Swift", "Apus apus"), ("two", "Common Swift", "Apus apus"), ("three", "Eurasian Magpie", "Pica pica")):
+            assert client.post("/api/v1/detections", json={
+                "common_name": common_name, "scientific_name": scientific_name,
+                "source_type": "manual", "source_event_id": identifier,
+            }).status_code == 201
+        birds = client.get("/api/v1/birds/recent").json()
+        assert [(bird["common_name"], bird["count"]) for bird in birds] == [("Common Swift", 2), ("Eurasian Magpie", 1)]
+        assert "/api/v1/birds/image.png?" in birds[0]["image_url"]
+        assert client.get(birds[0]["image_url"]).headers["content-type"] == "image/png"
+
+
 def test_settings_survive_application_restart(tmp_path: Path):
     app = create_app(tmp_path)
     with TestClient(app) as client:

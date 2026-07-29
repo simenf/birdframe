@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from io import BytesIO
 import logging
 import os
 import shutil
@@ -11,6 +12,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
 from .adapters import AdapterError, BirdNETGoClient, BirdWeatherClient, OpenRouterClient, ProviderUnavailable, PublicBirdWeatherClient, SamsungFrameClient
-from .compositor import collage_image, group_detections, latest_visitor_image
+from .compositor import SpeciesCount, collage_image, group_detections, latest_visitor_image, load_species_asset
 from .packages import PackageError, fetch_catalog, install_package
 from .schemas import (CompositionSummary, Detection, DetectionCreate, JobRequest, PackageInstallRequest,
                       PublicSettings, SettingsResponse, SettingsUpdate, SourceTestRequest)
@@ -334,6 +336,40 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @app.get("/api/v1/detections", response_model=list[Detection])
     async def detections(hours: int = 24) -> list[Detection]:
         return store.recent_detections(max(1, min(hours, 8760)))
+
+    @app.get("/api/v1/birds/recent")
+    async def recent_birds(request: Request) -> list[dict[str, object]]:
+        """One artwork-ready entry per species seen in the last 24 hours."""
+        base = str(request.base_url).rstrip("/")
+        return [
+            {
+                "common_name": item.common_name,
+                "scientific_name": item.scientific_name,
+                "count": item.count,
+                "confidence": item.confidence,
+                "latest_at": item.latest_at,
+                "image_url": f"{base}/api/v1/birds/image.png?" + urlencode({
+                    "common_name": item.common_name,
+                    "scientific_name": item.scientific_name,
+                    "revision": item.latest_at,
+                }),
+            }
+            for item in group_detections(store.recent_detections(24, limit=5000))
+        ]
+
+    @app.get("/api/v1/birds/image.png")
+    async def bird_image(common_name: str, scientific_name: str = "") -> Response:
+        if not common_name.strip() or len(common_name) > 250 or len(scientific_name) > 250:
+            raise HTTPException(status_code=422, detail="Invalid bird name")
+        settings = store.get_settings()
+        asset = load_species_asset(store.art_dir, SpeciesCount(
+            common_name=common_name, scientific_name=scientific_name, count=1,
+            confidence=1, latest_at="",
+        ), "perched", settings.palette)
+        asset.thumbnail((480, 480), Image.Resampling.LANCZOS)
+        output = BytesIO()
+        asset.save(output, "PNG", optimize=True)
+        return Response(content=output.getvalue(), media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
 
     @app.post("/api/v1/detections", response_model=Detection, status_code=201)
     async def create_detection(payload: DetectionCreate) -> Detection:
