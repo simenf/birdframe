@@ -11,5 +11,12 @@ should be obtained from their upstream repositories or a properly licensed
 release archive. Only this README and the ignore rule are tracked in a clean
 checkout.
 
+To make a distributable ZIP while keeping the original AvianVisitors layout:
+
+```sh
+python scripts/create-asset-pack.py assets/packs/avianvisitors-western-us \
+  dist/avianvisitors-western-us.zip
+```
+
 Each pack is selectable in Settings. Choose **Illustrations** for the colour
 plates or **Sketches** for the pencil studies.

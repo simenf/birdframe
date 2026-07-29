@@ -83,36 +83,20 @@ async def fetch_catalog(url: str) -> list[dict[str, Any]]:
     return valid
 
 
-async def install_package(entry: dict[str, Any], destination: Path) -> dict[str, Any]:
-    package_id = str(entry.get("id", ""))
+def install_archive(archive: Path, package_id: str, destination: Path) -> dict[str, Any]:
     if not SAFE_ID.fullmatch(package_id):
         raise PackageError("Invalid package id")
-    download_url = _https_url(str(entry.get("download_url", "")))
-    expected = str(entry.get("sha256", "")).lower()
-    if not re.fullmatch(r"[a-f0-9]{64}", expected):
-        raise PackageError("Package is missing a valid SHA-256")
     destination.mkdir(parents=True, exist_ok=True)
+    if archive.stat().st_size > MAX_ARCHIVE_BYTES:
+        raise PackageError("Package archive exceeds the 500 MB limit")
     with tempfile.TemporaryDirectory(prefix="birdframe-package-") as temporary:
-        archive = Path(temporary) / "package.zip"
-        try:
-            async with httpx.AsyncClient(timeout=120, follow_redirects=False) as client:
-                async with client.stream("GET", download_url) as response:
-                    response.raise_for_status()
-                    written = 0
-                    with archive.open("wb") as output:
-                        async for chunk in response.aiter_bytes():
-                            written += len(chunk)
-                            if written > MAX_ARCHIVE_BYTES:
-                                raise PackageError("Package archive exceeds the 500 MB limit")
-                            output.write(chunk)
-        except httpx.HTTPError as exc:
-            raise PackageError(f"Could not download package: {exc}") from exc
-        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-        if digest != expected:
-            raise PackageError("Package checksum does not match the catalog")
         staging = Path(temporary) / "staging"
         staging.mkdir()
-        with zipfile.ZipFile(archive) as bundle:
+        try:
+            bundle = zipfile.ZipFile(archive)
+        except (OSError, zipfile.BadZipFile) as exc:
+            raise PackageError("Package is not a valid ZIP archive") from exc
+        with bundle:
             total = 0
             for item in bundle.infolist():
                 name = Path(item.filename)
@@ -154,3 +138,55 @@ async def install_package(entry: dict[str, Any], destination: Path) -> dict[str,
         else:
             replacement.replace(target)
         return {"id": package_id, "path": str(target), "manifest": metadata}
+
+
+async def install_package(entry: dict[str, Any], destination: Path) -> dict[str, Any]:
+    package_id = str(entry.get("id", ""))
+    if not SAFE_ID.fullmatch(package_id):
+        raise PackageError("Invalid package id")
+    download_url = _https_url(str(entry.get("download_url", "")))
+    expected = str(entry.get("sha256", "")).lower()
+    if not re.fullmatch(r"[a-f0-9]{64}", expected):
+        raise PackageError("Package is missing a valid SHA-256")
+    with tempfile.TemporaryDirectory(prefix="birdframe-package-download-") as temporary:
+        archive = Path(temporary) / "package.zip"
+        try:
+            async with httpx.AsyncClient(timeout=120, follow_redirects=False) as client:
+                async with client.stream("GET", download_url) as response:
+                    response.raise_for_status()
+                    written = 0
+                    with archive.open("wb") as output:
+                        async for chunk in response.aiter_bytes():
+                            written += len(chunk)
+                            if written > MAX_ARCHIVE_BYTES:
+                                raise PackageError("Package archive exceeds the 500 MB limit")
+                            output.write(chunk)
+        except httpx.HTTPError as exc:
+            raise PackageError(f"Could not download package: {exc}") from exc
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        if digest != expected:
+            raise PackageError("Package checksum does not match the catalog")
+        return install_archive(archive, package_id, destination)
+
+
+async def install_package_url(url: str, package_id: str, destination: Path) -> dict[str, Any]:
+    """Download and install a direct HTTPS ZIP URL without a catalog."""
+    _https_url(url)
+    if not SAFE_ID.fullmatch(package_id):
+        raise PackageError("Invalid package id")
+    with tempfile.TemporaryDirectory(prefix="birdframe-package-download-") as temporary:
+        archive = Path(temporary) / "package.zip"
+        try:
+            async with httpx.AsyncClient(timeout=120, follow_redirects=False) as client:
+                async with client.stream("GET", url) as response:
+                    response.raise_for_status()
+                    written = 0
+                    with archive.open("wb") as output:
+                        async for chunk in response.aiter_bytes():
+                            written += len(chunk)
+                            if written > MAX_ARCHIVE_BYTES:
+                                raise PackageError("Package archive exceeds the 500 MB limit")
+                            output.write(chunk)
+        except httpx.HTTPError as exc:
+            raise PackageError(f"Could not download package: {exc}") from exc
+        return install_archive(archive, package_id, destination)

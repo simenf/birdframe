@@ -39,10 +39,22 @@ download URL, and minimum BirdFrame version. Installation downloads to a
 temporary location, verifies SHA-256 and archive safety, validates the manifest,
 then atomically adds it to the art library.
 
+The Settings page also supports two direct installation paths: choose a local
+`.zip` file, or paste a direct HTTPS ZIP URL. Both operations are queued as
+jobs and appear in Activity log. Catalog entries can be loaded and installed
+from the same page. Direct URLs do not provide a catalog checksum, so prefer a
+catalog entry with a published SHA-256 when distributing packs publicly.
+
 The source repository does not commit third-party PNG artwork. When building
 from source, `scripts/import-illustration-packs.sh` can copy a licensed upstream
 pack into `assets/packs/`; those files remain ignored by Git and are seeded into
 the persistent art directory on first container start.
+
+To create a shareable ZIP from one of those downloaded packs, run
+`python scripts/create-asset-pack.py assets/packs/<pack-id> output.zip`. The
+script preserves the AvianVisitors-compatible directories and adds a small
+`manifest.json`; include the upstream license and attribution files before
+sharing.
 
 Packages contain `manifest.json`, `LICENSES/`, `attribution.json`, assets, and
 previews. BirdFrame rejects unsafe paths, symlinks, unknown file types, overly

@@ -22,9 +22,9 @@ from PIL import Image
 
 from .adapters import AdapterError, BirdNETGoClient, BirdWeatherClient, OpenRouterClient, ProviderUnavailable, PublicBirdWeatherClient, SamsungFrameClient
 from .compositor import SpeciesCount, collage_image, group_detections, latest_visitor_image, load_species_asset
-from .packages import PackageError, fetch_catalog, install_package
+from .packages import MAX_ARCHIVE_BYTES, PackageError, SAFE_ID, fetch_catalog, install_archive, install_package, install_package_url
 from .schemas import (CompositionSummary, Detection, DetectionCreate, JobRequest, PackageInstallRequest,
-                      PublicSettings, SettingsResponse, SettingsUpdate, SourceTestRequest)
+                      PackageUrlInstallRequest, PublicSettings, SettingsResponse, SettingsUpdate, SourceTestRequest)
 from .storage import Store
 
 logger = logging.getLogger("birdframe")
@@ -522,6 +522,67 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
                 store.update_job(job_id, status="completed", result=result)
                 await service.render()
             except PackageError as exc:
+                store.update_job(job_id, status="failed", error=str(exc))
+        asyncio.create_task(install())
+        return {"id": job_id}
+
+    @app.post("/api/v1/art/packages/upload", status_code=202)
+    async def package_upload(request: Request) -> dict[str, int]:
+        """Queue a local ZIP package for safe installation.
+
+        The browser sends the ZIP as the raw request body. This avoids requiring
+        a multipart parser in the small Docker image.
+        """
+        filename = Path(request.headers.get("x-birdframe-filename", "package.zip")).name
+        package_id = Path(filename).stem.lower()
+        if not filename.lower().endswith(".zip") or not SAFE_ID.fullmatch(package_id):
+            raise HTTPException(status_code=422, detail="ZIP filename must become a safe package id")
+        temporary = Path(tempfile.mkdtemp(prefix="birdframe-upload-"))
+        archive = temporary / "package.zip"
+        content_length = request.headers.get("content-length")
+        if content_length and content_length.isdigit() and int(content_length) > MAX_ARCHIVE_BYTES:
+            shutil.rmtree(temporary, ignore_errors=True)
+            raise HTTPException(status_code=413, detail="Package archive exceeds the 500 MB limit")
+        body = await request.body()
+        written = len(body)
+        try:
+            with archive.open("wb") as output:
+                if written > MAX_ARCHIVE_BYTES:
+                    raise HTTPException(status_code=413, detail="Package archive exceeds the 500 MB limit")
+                output.write(body)
+        except HTTPException:
+            shutil.rmtree(temporary, ignore_errors=True)
+            raise
+        job_id = store.create_job("package_upload", {"package_id": package_id, "filename": filename})
+        async def install() -> None:
+            store.update_job(job_id, status="running")
+            try:
+                result = install_archive(archive, package_id, store.art_dir / "packages")
+                store.update_job(job_id, status="completed", result=result)
+                await service.render()
+            except (PackageError, OSError) as exc:
+                store.update_job(job_id, status="failed", error=str(exc))
+            finally:
+                shutil.rmtree(temporary, ignore_errors=True)
+        asyncio.create_task(install())
+        return {"id": job_id}
+
+    @app.post("/api/v1/art/packages/install-url", status_code=202)
+    async def package_install_url(payload: PackageUrlInstallRequest) -> dict[str, int]:
+        """Queue installation from a direct HTTPS ZIP URL."""
+        from urllib.parse import urlparse
+        parsed = urlparse(payload.url)
+        package_id = payload.package_id or Path(parsed.path).stem.lower()
+        if parsed.scheme != "https" or not parsed.netloc or not SAFE_ID.fullmatch(package_id):
+            raise HTTPException(status_code=422, detail="Use an HTTPS ZIP URL and a safe package id")
+        job_id = store.create_job("package_url_install", {"package_id": package_id, "url": payload.url})
+        async def install() -> None:
+            store.update_job(job_id, status="running")
+            try:
+                result = await install_package_url(payload.url, package_id, store.art_dir / "packages")
+                store.update_job(job_id, status="completed", result=result)
+                await service.render()
+            except (PackageError, OSError) as exc:
                 store.update_job(job_id, status="failed", error=str(exc))
         asyncio.create_task(install())
         return {"id": job_id}
