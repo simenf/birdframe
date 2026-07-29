@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import os
 import shutil
 import tempfile
@@ -23,6 +24,8 @@ from .packages import PackageError, fetch_catalog, install_package
 from .schemas import (CompositionSummary, Detection, DetectionCreate, JobRequest, PackageInstallRequest,
                       PublicSettings, SettingsResponse, SettingsUpdate, SourceTestRequest)
 from .storage import Store
+
+logger = logging.getLogger("birdframe")
 
 
 def data_directory() -> Path:
@@ -74,6 +77,10 @@ class BirdFrameService:
         self.events: set[asyncio.Queue[int]] = set()
         self.render_lock = asyncio.Lock()
 
+    def log(self, level: str, message: str) -> None:
+        self.store.log(level, message)
+        getattr(logger, level.lower(), logger.info)(message)
+
     async def render(self) -> dict[str, Any]:
         async with self.render_lock:
             settings = self.store.get_settings()
@@ -105,11 +112,15 @@ class BirdFrameService:
         secret = self.store.secret("openrouter_api_key")
         if not secret:
             self.store.update_job(job_id, status="failed", error="Configure an OpenRouter API key first")
+            self.log("warning", f"Artwork generation job {job_id} needs an OpenRouter API key")
             return
-        if not request.model:
+        model = request.model or settings.openrouter_model
+        if not model:
             self.store.update_job(job_id, status="failed", error="Choose an OpenRouter image model")
+            self.log("warning", f"Artwork generation job {job_id} needs an OpenRouter image model")
             return
         self.store.update_job(job_id, status="running")
+        self.log("info", f"Artwork generation job {job_id} started for {len(request.species)} species")
         client = OpenRouterClient(secret)
         generated: list[str] = []
         try:
@@ -123,7 +134,7 @@ class BirdFrameService:
                 target.mkdir(parents=True, exist_ok=True)
                 poses = ("perched", "in flight with wings spread") if request.poses == "both" else ("perched",)
                 for requested_pose in poses:
-                    response = await client.generate(model=request.model, prompt=style_prompt(common, scientific, requested_pose, settings.custom_prompt_addendum), size="1024x1024")
+                    response = await client.generate(model=model, prompt=style_prompt(common, scientific, requested_pose, settings.custom_prompt_addendum), size="1024x1024")
                     with Image.open(__import__("io").BytesIO(response.content)) as source:
                         asset = source.convert("RGBA")
                     if asset.getchannel("A").getextrema()[0] == 255:
@@ -132,9 +143,11 @@ class BirdFrameService:
                     asset.save(target / f"{pose_name}.png", "PNG", optimize=True)
                     generated.append(f"{common}:{pose_name}")
             self.store.update_job(job_id, status="completed", result={"generated": generated})
+            self.log("info", f"Artwork generation job {job_id} completed: {len(generated)} assets saved")
             await self.render()
         except (AdapterError, OSError, ValueError) as exc:
             self.store.update_job(job_id, status="failed", error=str(exc))
+            self.log("error", f"Artwork generation job {job_id} failed: {exc}")
         finally:
             await client.aclose()
 
@@ -173,6 +186,7 @@ async def source_worker(service: BirdFrameService, stop: asyncio.Event) -> None:
                     await client.aclose()
                     if changed:
                         await service.render()
+                        service.log("info", "Imported new detections from private BirdWeather station")
                 await pause(settings.birdweather_poll_seconds)
             elif settings.detection_source == "birdweather_public":
                 if settings.birdweather_public_station_id:
@@ -189,6 +203,7 @@ async def source_worker(service: BirdFrameService, stop: asyncio.Event) -> None:
                     await client.aclose()
                     if changed:
                         await service.render()
+                        service.log("info", f"Imported new detections from public BirdWeather station {settings.birdweather_public_station_id}")
                 await pause(settings.birdweather_poll_seconds)
             else:
                 # Reconnect after each event so a source change is observed promptly.
@@ -206,7 +221,8 @@ async def source_worker(service: BirdFrameService, stop: asyncio.Event) -> None:
                 finally:
                     await stream.aclose()
                     await client.aclose()
-        except (AdapterError, OSError, asyncio.TimeoutError):
+        except (AdapterError, OSError, asyncio.TimeoutError) as exc:
+            service.log("warning", f"Detection source temporarily unavailable: {type(exc).__name__}")
             await pause(5)
 
 
@@ -253,6 +269,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @app.put("/api/v1/settings", response_model=SettingsResponse)
     async def put_settings(payload: SettingsUpdate) -> SettingsResponse:
         result = store.save_settings(payload)
+        service.log("info", f"Settings saved; active source is {result.detection_source}")
         await service.render()
         return result
 
@@ -315,6 +332,10 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @app.get("/api/v1/jobs")
     async def jobs() -> list[dict[str, object]]:
         return store.jobs()
+
+    @app.get("/api/v1/logs")
+    async def logs(limit: int = 100) -> list[dict[str, object]]:
+        return store.logs(max(1, min(limit, 500)))
 
     @app.post("/api/v1/sources/test")
     async def test_source(payload: SourceTestRequest) -> dict[str, object]:

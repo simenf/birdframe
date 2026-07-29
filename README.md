@@ -53,6 +53,14 @@ BirdNET-Go administration page linked from BirdFrame. See
   select to your chosen OpenRouter model/provider.
 - Samsung control and image upload occur over your local network.
 
+## Persistent artwork and logs
+
+Docker Compose bind-mounts `${BIRDFRAME_DATA_DIR:-./data}` to `/data` in the
+container. Generated species PNGs, installed packages, rendered JPEGs, the
+SQLite database, encrypted secrets, and the in-app activity log therefore
+survive image rebuilds and container replacement. Back up the host `./data`
+directory before moving an installation.
+
 ## Generic display API
 
 The composition does not depend on the Samsung integration. Other devices can

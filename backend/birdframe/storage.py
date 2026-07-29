@@ -87,6 +87,12 @@ class Store:
                   content_id TEXT NOT NULL UNIQUE,
                   created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS logs (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  level TEXT NOT NULL,
+                  message TEXT NOT NULL,
+                  created_at TEXT NOT NULL
+                );
                 """
             )
 
@@ -197,6 +203,16 @@ class Store:
         with self.connection() as db:
             rows = db.execute("SELECT * FROM jobs ORDER BY id DESC LIMIT 100").fetchall()
         return [dict(row) | {"payload": json.loads(row["payload_json"]), "result": json.loads(row["result_json"])} for row in rows]
+
+    def log(self, level: str, message: str) -> None:
+        """Persist concise, credential-free operational events for the web UI."""
+        with self.connection() as db:
+            db.execute("INSERT INTO logs(level,message,created_at) VALUES(?,?,?)", (level.upper(), message[:2000], utcnow()))
+
+    def logs(self, limit: int = 100) -> list[dict[str, str | int]]:
+        with self.connection() as db:
+            rows = db.execute("SELECT id,level,message,created_at FROM logs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
 
     def record_tv_upload(self, composition_id: int, content_id: str) -> str | None:
         """Record a successful owned upload and return the prior owned content id."""

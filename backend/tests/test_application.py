@@ -47,3 +47,12 @@ def test_public_birdweather_station_id_is_saved_without_a_secret(tmp_path: Path)
         assert saved.json()["detection_source"] == "birdweather_public"
         assert saved.json()["birdweather_public_station_id"] == 2505
         assert saved.json()["has_birdweather_token"] is False
+
+
+def test_settings_activity_is_available_in_the_web_log(tmp_path: Path):
+    app = create_app(tmp_path)
+    with TestClient(app) as client:
+        settings = client.get("/api/v1/settings").json()
+        assert client.put("/api/v1/settings", json=settings).status_code == 200
+        logs = client.get("/api/v1/logs").json()
+        assert any("Settings saved" in entry["message"] for entry in logs)

@@ -42,6 +42,7 @@ class PublicSettings(BaseModel):
     occurrence_max_species: int = Field(default=100, ge=1, le=1000)
     occurrence_season: Literal["current", "all_year"] = "current"
     custom_prompt_addendum: str = Field(default="", max_length=4000)
+    openrouter_model: str = Field(default="", max_length=250)
 
 
 class SettingsUpdate(PublicSettings):
