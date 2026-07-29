@@ -33,11 +33,16 @@ licensed for non-commercial use.
 
 ## Pre-generated packages
 
-Configure a public GitHub catalog URL/repository in Settings. A package catalog
+Configure a public HTTPS GitHub catalog URL in Settings. A package catalog
 entry specifies its version, region, style/layout compatibility, checksum,
 download URL, and minimum BirdFrame version. Installation downloads to a
 temporary location, verifies SHA-256 and archive safety, validates the manifest,
 then atomically adds it to the art library.
+
+The source repository does not commit third-party PNG artwork. When building
+from source, `scripts/import-illustration-packs.sh` can copy a licensed upstream
+pack into `assets/packs/`; those files remain ignored by Git and are seeded into
+the persistent art directory on first container start.
 
 Packages contain `manifest.json`, `LICENSES/`, `attribution.json`, assets, and
 previews. BirdFrame rejects unsafe paths, symlinks, unknown file types, overly

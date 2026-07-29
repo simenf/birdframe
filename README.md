@@ -43,9 +43,10 @@ The container receives `/dev/snd`; select and test its microphone in the
 BirdNET-Go administration page linked from BirdFrame. See
 [docs/installation.md](docs/installation.md) before deploying permanently.
 
-Artwork packs are deliberately not redistributed by this repository. Import a
-licensed pack into `assets/packs/<pack-id>/` (or install one from the UI) only
-after checking its manifest and attribution; see [docs/artwork.md](docs/artwork.md).
+This repository does not commit third-party artwork PNGs. A licensed source
+pack can be placed in `assets/packs/<pack-id>/` for a source build, or installed
+from a configured HTTPS catalog in the UI. In both cases, check its manifest,
+license, and attribution first; see [docs/artwork.md](docs/artwork.md).
 
 ## What is sent where
 

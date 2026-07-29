@@ -7,7 +7,9 @@ Use `scripts/import-illustration-packs.sh /path/to/downloaded/packs` to turn
 the downloaded AvianVisitors repositories into clean packs containing only
 `illustrations`, `sketches`, `dims.json`, and `masks.json`. The source images
 are deliberately ignored by Git: they are large third-party artwork assets and
-should be obtained from their upstream repositories or a release archive.
+should be obtained from their upstream repositories or a properly licensed
+release archive. Only this README and the ignore rule are tracked in a clean
+checkout.
 
 Each pack is selectable in Settings. Choose **Illustrations** for the colour
 plates or **Sketches** for the pencil studies.
