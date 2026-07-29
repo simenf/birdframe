@@ -231,7 +231,8 @@ async def source_worker(service: BirdFrameService, stop: asyncio.Event) -> None:
             elif settings.detection_source == "birdweather_public":
                 if settings.birdweather_public_station_id:
                     client = PublicBirdWeatherClient(settings.birdweather_public_station_id)
-                    result = await client.poll(limit=100)
+                    seeding = cursor is None
+                    result = await client.history() if seeding else await client.poll(limit=100)
                     changed = False
                     for item in result.detections:
                         created = service.store.add_detection(DetectionCreate(
@@ -243,7 +244,9 @@ async def source_worker(service: BirdFrameService, stop: asyncio.Event) -> None:
                     await client.aclose()
                     if changed:
                         await service.render()
-                        service.log("info", f"Imported new detections from public BirdWeather station {settings.birdweather_public_station_id}")
+                        activity = "Seeded the previous 24 hours" if seeding else "Imported new detections"
+                        service.log("info", f"{activity} from public BirdWeather station {settings.birdweather_public_station_id}")
+                    cursor = "live"
                 await pause(settings.birdweather_poll_seconds)
             else:
                 # Reconnect after each event so a source change is observed promptly.

@@ -140,13 +140,14 @@ class PublicBirdWeatherClient:
     """
 
     QUERY = """
-    query PublicStationDetections($stationIds: [ID!], $first: Int) {
-      detections(first: $first, stationIds: $stationIds, classifications: [\"avian\"]) {
+    query PublicStationDetections($stationIds: [ID!], $first: Int, $after: String) {
+      detections(first: $first, after: $after, stationIds: $stationIds, classifications: [\"avian\"]) {
         nodes {
           id timestamp confidence
           coords { lat lon }
           species { id commonName scientificName }
         }
+        pageInfo { endCursor hasNextPage }
       }
     }
     """
@@ -170,11 +171,11 @@ class PublicBirdWeatherClient:
         except AdapterError as exc:
             return Health(False, str(exc))
 
-    async def poll(self, *, limit: int = 100) -> PollResult:
+    async def poll(self, *, limit: int = 100, after: str | None = None) -> PollResult:
         if not 1 <= limit <= 100:
             raise ValueError("limit must be from 1 to 100")
         try:
-            response = await self._client.post(self.base_url, json={"query": self.QUERY, "variables": {"stationIds": [str(self.station_id)], "first": limit}})
+            response = await self._client.post(self.base_url, json={"query": self.QUERY, "variables": {"stationIds": [str(self.station_id)], "first": limit, "after": after}})
             response.raise_for_status()
             body = response.json()
         except (httpx.HTTPError, ValueError) as exc:
@@ -188,7 +189,28 @@ class PublicBirdWeatherClient:
         if not isinstance(rows, list):
             raise AdapterError("Public BirdWeather response has invalid detections")
         detections = tuple(sorted((self._parse(row) for row in rows), key=lambda item: item.occurred_at))
-        return PollResult(detections, None)
+        page_info = connection.get("pageInfo", {}) if isinstance(connection, dict) else {}
+        cursor = page_info.get("endCursor") if isinstance(page_info, dict) and page_info.get("hasNextPage") else None
+        return PollResult(detections, cursor if isinstance(cursor, str) else None)
+
+    async def history(self, *, max_results: int = 2000) -> PollResult:
+        """Fetch the public station's complete default 24-hour window.
+
+        BirdWeather's public GraphQL query defaults to the last 24 hours.
+        Cursor paging is used only for this startup seed; live polling keeps
+        requesting the newest page so new detections are never skipped.
+        """
+        if max_results < 1:
+            raise ValueError("max_results must be positive")
+        cursor: str | None = None
+        collected: list[Detection] = []
+        while len(collected) < max_results:
+            page = await self.poll(limit=min(100, max_results - len(collected)), after=cursor)
+            collected.extend(page.detections)
+            if not page.cursor:
+                break
+            cursor = page.cursor
+        return PollResult(tuple(sorted(collected, key=lambda item: item.occurred_at)), None)
 
     @staticmethod
     def _parse(data: dict[str, Any]) -> Detection:

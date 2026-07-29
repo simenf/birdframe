@@ -14,6 +14,11 @@ de-duplicates detections locally. It only has access to information the station
 operator has made public; it cannot upload, edit, or access private station
 data.
 
+When public mode starts or a different station is selected, BirdFrame pages
+through the available public detections from BirdWeather's default previous
+24-hour window. This seeds the first collage immediately; repeat imports are
+de-duplicated by BirdWeather detection ID.
+
 For an authenticated station, BirdFrame polls avian detections using the token
 you enter in Settings or the setup wizard.
 

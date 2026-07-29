@@ -48,7 +48,7 @@ async def test_public_birdweather_polls_a_public_station_without_a_token():
     async def handler(request):
         assert request.url.path == "/graphql"
         body = json.loads(request.content)
-        assert body["variables"] == {"stationIds": ["2505"], "first": 10}
+        assert body["variables"] == {"stationIds": ["2505"], "first": 10, "after": None}
         assert "classifications" in body["query"]
         return httpx.Response(200, json={"data": {"detections": {"nodes": [
             {"id": "42", "timestamp": "2026-01-02T10:00:00+00:00", "confidence": .8, "coords": {"lat": 59.9, "lon": 10.7}, "species": {"id": "2", "commonName": "Later", "scientificName": "Laterus birdus"}},
@@ -57,6 +57,25 @@ async def test_public_birdweather_polls_a_public_station_without_a_token():
     client = async_client(handler)
     result = await PublicBirdWeatherClient(2505, base_url="http://test/graphql", client=client).poll(limit=10)
     assert [(item.provider, item.external_id, item.common_name) for item in result.detections] == [("birdweather-public", "41", "Earlier"), ("birdweather-public", "42", "Later")]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_public_birdweather_history_follows_graphql_cursors():
+    requests = []
+    async def handler(request):
+        body = json.loads(request.content); requests.append(body["variables"])
+        if body["variables"]["after"] is None:
+            return httpx.Response(200, json={"data": {"detections": {"nodes": [
+                {"id": "2", "timestamp": "2026-01-02T10:00:00+00:00", "confidence": .8, "coords": {}, "species": {"id": "2", "commonName": "Later", "scientificName": "Laterus birdus"}},
+            ], "pageInfo": {"hasNextPage": True, "endCursor": "next"}}}})
+        return httpx.Response(200, json={"data": {"detections": {"nodes": [
+            {"id": "1", "timestamp": "2026-01-02T09:00:00+00:00", "confidence": .7, "coords": {}, "species": {"id": "1", "commonName": "Earlier", "scientificName": "Earlierus birdus"}},
+        ], "pageInfo": {"hasNextPage": False, "endCursor": None}}}})
+    client = async_client(handler)
+    result = await PublicBirdWeatherClient(2505, base_url="http://test/graphql", client=client).history()
+    assert [item.external_id for item in result.detections] == ["1", "2"]
+    assert [item["after"] for item in requests] == [None, "next"]
     await client.aclose()
 
 
