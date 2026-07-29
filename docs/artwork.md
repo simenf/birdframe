@@ -54,7 +54,8 @@ To create a shareable ZIP from one of those downloaded packs, run
 `python scripts/create-asset-pack.py assets/packs/<pack-id> output.zip`. The
 script preserves the AvianVisitors-compatible directories and adds a small
 `manifest.json`; include the upstream license and attribution files before
-sharing.
+sharing. See the complete [asset-pack authoring guide](asset-packs.md) for the
+directory layout, catalog format, and release checklist.
 
 Packages contain `manifest.json`, `LICENSES/`, `attribution.json`, assets, and
 previews. BirdFrame rejects unsafe paths, symlinks, unknown file types, overly

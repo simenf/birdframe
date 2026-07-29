@@ -109,6 +109,7 @@ Do not lose `data/secret.key`: encrypted tokens cannot be recovered without it.
 - [Samsung Frame](docs/samsung-frame.md)
 - [Display API](docs/display-api.md)
 - [Artwork and packages](docs/artwork.md)
+- [Asset-pack authoring guide](docs/asset-packs.md)
 - [Localization and Norwegian names](docs/localization.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Development](docs/development.md)
