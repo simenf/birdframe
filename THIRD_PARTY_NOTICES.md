@@ -10,7 +10,8 @@ replacement for reviewing each dependency's current license before release.
 | [samsung-tv-ws-api](https://github.com/xchwarze/samsung-tv-ws-api) | Samsung TV WebSocket/Art Mode client | Samsung Art Mode is an unofficial/private interface and may change by firmware. |
 | [AvianVisitors](https://github.com/Twarner491/AvianVisitors) | Product and art-pipeline inspiration | BirdFrame independently reimplements the ideas described by the project; it does not include its code or artwork. |
 | [OpenRouter](https://openrouter.ai) | User-selected image-generation provider | Users supply their own key and must comply with the selected model's terms. Generated assets can have model/provider-specific terms. |
-| [BirdWeather](https://www.birdweather.com) | Optional detection-source API | Users supply their own station token and must comply with BirdWeather terms. |
+| [BirdWeather](https://www.birdweather.com) | Optional detection-source API | Public station data needs no credential; private/token-scoped requests require a user-supplied token and must comply with BirdWeather terms. |
+| [BirdLife Norway / Norsk navnekomité for fugl](https://www.birdlife.no/fuglekunnskap/navn/) | Norwegian species names bundled in `backend/birdframe/data/no_names.json` | Source data is maintained by BirdLife Norway; review its current terms and attribution requirements before redistribution. |
 
 Python, JavaScript, operating-system, and transitive dependencies are recorded
 in the release build's dependency metadata. A production release should add

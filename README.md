@@ -30,7 +30,8 @@ docker compose up -d
 ```
 
 Open `http://HOSTNAME-OR-IP:8765` and complete the setup wizard. The default
-starts only BirdFrame, for use with BirdWeather or prepared artwork.
+starts only BirdFrame, for use with public BirdWeather data or prepared artwork.
+A private BirdWeather token is optional.
 
 For a USB/local microphone on Linux, start the optional upstream sidecar:
 
@@ -41,6 +42,10 @@ docker compose --profile local-audio up -d
 The container receives `/dev/snd`; select and test its microphone in the
 BirdNET-Go administration page linked from BirdFrame. See
 [docs/installation.md](docs/installation.md) before deploying permanently.
+
+Artwork packs are deliberately not redistributed by this repository. Import a
+licensed pack into `assets/packs/<pack-id>/` (or install one from the UI) only
+after checking its manifest and attribution; see [docs/artwork.md](docs/artwork.md).
 
 ## What is sent where
 
@@ -106,3 +111,12 @@ Do not lose `data/secret.key`: encrypted tokens cannot be recovered without it.
 - [Localization and Norwegian names](docs/localization.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Development](docs/development.md)
+
+## Publishing and licensing
+
+The repository is ready to build from a clean checkout, but a release
+maintainer still needs to choose a GitHub owner, publish a container image, and
+review each optional artwork/model license. Source code and original
+documentation are CC BY-NC-SA 4.0; see [LICENSE](LICENSE) and
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Local runtime state is ignored
+by Git and must never be committed.

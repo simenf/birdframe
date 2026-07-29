@@ -45,8 +45,9 @@ The default command starts one container:
 docker compose up -d
 ```
 
-Enter the BirdWeather token in the wizard. No microphone device or BirdNET-Go
-container is needed.
+Choose public station mode in the wizard to use public detections without a
+token. A token is only needed for a private station or token-scoped requests;
+no microphone device or BirdNET-Go container is needed in either case.
 
 ### Local microphone
 
@@ -59,6 +60,14 @@ docker compose --profile local-audio up -d
 This maps `/dev/snd` only into BirdNET-Go. Verify the device exists on the host
 with `arecord -l` (install `alsa-utils` if needed), then use the linked
 BirdNET-Go page to select/test it. Refer to [microphone.md](microphone.md).
+
+## Artwork and localization
+
+The image-pack directory is optional. Put licensed packs under
+`assets/packs/<pack-id>/` when building from source, or install them from the
+Artwork settings page. The repository does not ship third-party image packs.
+For the bundled Norwegian name database and its refresh procedure, see
+[localization.md](localization.md).
 
 ## Upgrading
 

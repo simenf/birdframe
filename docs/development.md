@@ -6,7 +6,9 @@ in `frontend/`. The production Dockerfile builds the UI and copies it to
 
 ## Local development
 
-Use Python 3.12 and a current Node LTS release:
+Use Python 3.12 and a current Node LTS release. A clean checkout does not need
+the ignored runtime `data/` directory or third-party artwork packs to run the
+unit tests.
 
 ```sh
 cd backend
@@ -27,6 +29,12 @@ npm run dev
 Set the frontend development proxy/API base URL according to its local README or
 Vite configuration. Use synthetic BirdNET-Go SSE and BirdWeather fixtures in
 tests; do not require live provider keys or a real TV.
+
+Refresh the Norwegian name data only when the upstream workbook changes:
+
+```sh
+python scripts/import-norwegian-bird-names.py /path/to/AviList2025NNKFkomplett.xlsx
+```
 
 ## Verification
 
@@ -58,3 +66,7 @@ Samsung Art Mode server for failure paths.
 Never add provider tokens, Samsung pairing tokens, `data/`, model weights, or
 generated artwork to git. Keep implementation changes independently inspired by
 AvianVisitors; do not copy its code/assets without a separate license review.
+
+GitHub Actions runs the backend test suite and frontend production build for
+every push and pull request. Docker image publishing is intentionally not
+automatic until a maintainer selects a registry and release policy.

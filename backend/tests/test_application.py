@@ -75,7 +75,7 @@ def test_settings_survive_application_restart(tmp_path: Path):
             "tv_host": "192.168.1.134",
             "collage_style": "avianvisitors_horizontal",
             "legend_script_size": "large",
-            "openrouter_api_key": "sk-or-v1-persistent-test-key",
+            "openrouter_api_key": "test-openrouter-key",
         })
         assert client.put("/api/v1/settings", json=settings).status_code == 200
 
