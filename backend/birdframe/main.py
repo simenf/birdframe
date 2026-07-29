@@ -365,11 +365,29 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         asset = load_species_asset(store.art_dir, SpeciesCount(
             common_name=common_name, scientific_name=scientific_name, count=1,
             confidence=1, latest_at="",
-        ), "perched", settings.palette)
+        ), "perched", settings.palette, settings.asset_pack_id, settings.asset_variant)
         asset.thumbnail((480, 480), Image.Resampling.LANCZOS)
         output = BytesIO()
         asset.save(output, "PNG", optimize=True)
         return Response(content=output.getvalue(), media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
+    @app.get("/api/v1/art/packs")
+    async def artwork_packs() -> list[dict[str, object]]:
+        """List source-seeded and locally-installed compatible artwork packs."""
+        root = store.art_dir / "packages"
+        if not root.exists():
+            return []
+        result: list[dict[str, object]] = []
+        for package in sorted(item for item in root.iterdir() if item.is_dir()):
+            illustration = next((path for path in (package / "illustrations", package / "assets" / "illustrations", package / "avian" / "assets" / "illustrations") if path.is_dir()), None)
+            sketches = next((path for path in (package / "sketches", package / "assets" / "sketches", package / "avian" / "assets" / "sketches") if path.is_dir()), None)
+            if illustration or sketches:
+                result.append({
+                    "id": package.name,
+                    "illustrations": len(list(illustration.glob("*.png"))) if illustration else 0,
+                    "sketches": len(list(sketches.glob("*.png"))) if sketches else 0,
+                })
+        return result
 
     @app.post("/api/v1/detections", response_model=Detection, status_code=201)
     async def create_detection(payload: DetectionCreate) -> Detection:

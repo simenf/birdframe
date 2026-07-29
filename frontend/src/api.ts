@@ -20,6 +20,7 @@ export const api = {
   models: () => request<Array<{ id: string; name?: string; pricing?: unknown }>>("/openrouter/models"),
   occurrences: () => request<Array<{ common_name: string; scientific_name: string; score: number }>>("/art/occurrences"),
   generateArt: (body: { species: Array<{ common_name: string; scientific_name: string }>; model?: string; poses?: "one" | "both" }) => request<{ id: number }>("/art/generate", { method: "POST", body: JSON.stringify(body) }),
+  packs: () => request<Array<{ id: string; illustrations: number; sketches: number }>>("/art/packs"),
   jobs: () => request<Array<{ id: number; kind: string; status: string; error?: string; updated_at: string }>>("/jobs"),
   logs: () => request<Array<{ id: number; level: string; message: string; created_at: string }>>("/logs?limit=100"),
 };

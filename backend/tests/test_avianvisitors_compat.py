@@ -17,6 +17,18 @@ def test_loads_unmodified_avianvisitors_illustration_names(tmp_path: Path):
     assert load_species_asset(tmp_path, species, "flight", "classic").size == (10, 20)
 
 
+def test_selected_pack_and_sketch_treatment_are_honoured(tmp_path: Path):
+    species = SpeciesCount("Common Swift", "Apus apus", 1, 1, "")
+    root = tmp_path / "packages" / "regional-pack" / "avian" / "assets"
+    (root / "illustrations").mkdir(parents=True)
+    (root / "sketches").mkdir()
+    Image.new("RGBA", (20, 10), (12, 34, 56, 255)).save(root / "illustrations" / "apus-apus.png")
+    Image.new("RGBA", (7, 19), (65, 43, 21, 255)).save(root / "sketches" / "apus-apus.png")
+
+    asset = load_species_asset(tmp_path, species, "perched", "classic", "regional-pack", "sketches")
+    assert asset.size == (7, 19)
+
+
 def test_accepts_avianvisitors_bundle_without_a_birdframe_manifest(tmp_path: Path):
     illustrations = tmp_path / "illustrations"
     illustrations.mkdir()

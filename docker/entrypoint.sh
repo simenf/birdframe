@@ -16,6 +16,13 @@ fi
 usermod --gid "${bf_gid}" birdframe
 
 mkdir -p "${BIRDFRAME_DATA_DIR:-/data}"
+# Source packs are baked into the image from assets/packs.  Copy only missing
+# files so a mapped /data volume remains authoritative for generated assets,
+# downloaded packs and future updates.
+mkdir -p "${BIRDFRAME_DATA_DIR:-/data}/art/packages"
+if [ -d /opt/birdframe-seed/packages ]; then
+  cp -an /opt/birdframe-seed/packages/. "${BIRDFRAME_DATA_DIR:-/data}/art/packages/" 2>/dev/null || true
+fi
 chown -R "${bf_uid}:${bf_gid}" "${BIRDFRAME_DATA_DIR:-/data}"
 
 exec gosu "${bf_uid}:${bf_gid}" "$@"

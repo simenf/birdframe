@@ -37,6 +37,8 @@ class PublicSettings(BaseModel):
     palette: Literal["classic", "muted", "vivid"] = "classic"
     collage_density: Literal["sparse", "standard", "full"] = "standard"
     pose_preference: Literal["balanced", "perched", "flight"] = "balanced"
+    asset_pack_id: str = "all"
+    asset_variant: Literal["illustrations", "sketches"] = "illustrations"
     package_catalog_url: str = ""
     display_api_enabled: bool = True
     display_api_require_token: bool = False

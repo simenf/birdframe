@@ -118,7 +118,10 @@ def _demo_bird(species: SpeciesCount, pose: str, palette_name: str) -> Image.Ima
     return image
 
 
-def load_species_asset(art_dir: Path, species: SpeciesCount, pose: str, palette: str) -> Image.Image:
+def load_species_asset(
+    art_dir: Path, species: SpeciesCount, pose: str, palette: str,
+    package_id: str = "all", asset_variant: str = "illustrations",
+) -> Image.Image:
     candidate = _asset_path(art_dir, species, pose)
     if candidate.exists():
         with Image.open(candidate) as asset:
@@ -126,7 +129,10 @@ def load_species_asset(art_dir: Path, species: SpeciesCount, pose: str, palette:
     safe = "".join(character.lower() if character.isalnum() else "-" for character in (species.scientific_name or species.common_name)).strip("-")
     package_root = art_dir / "packages"
     if package_root.exists():
-        for package in sorted(package_root.iterdir()):
+        packages = sorted(package_root.iterdir())
+        if package_id != "all":
+            packages = [package for package in packages if package.name == package_id]
+        for package in packages:
             candidates = [package / "assets" / "species" / safe / f"{pose}.png"]
             # AvianVisitors bundles use scientific-name slugs directly:
             # <slug>.png is perched, <slug>-2.png is the flight pose.
@@ -136,6 +142,13 @@ def load_species_asset(art_dir: Path, species: SpeciesCount, pose: str, palette:
                 package / "assets" / "illustrations" / avian_slug,
                 package / "avian" / "assets" / "illustrations" / avian_slug,
             ))
+            if asset_variant == "sketches":
+                sketch_candidates = (
+                    package / "sketches" / avian_slug,
+                    package / "assets" / "sketches" / avian_slug,
+                    package / "avian" / "assets" / "sketches" / avian_slug,
+                )
+                candidates = list(sketch_candidates) + candidates
             for packaged in candidates:
                 if packaged.exists():
                     with Image.open(packaged) as asset:
@@ -302,15 +315,44 @@ def _draw_number(draw: ImageDraw.ImageDraw, x: int, y: int, number: int, paper: 
     draw.text((x - (box[2] - box[0]) / 2, y - (box[3] - box[1]) / 2 - 2), text, fill=(74, 57, 41), font=font)
 
 
+def _marker_position(placement: Placement, birds: Image.Image, markers: Image.Image, width: int, height: int, margin: int) -> tuple[int, int]:
+    """Place a numbered callout in clear paper rather than over a bird."""
+    radius, clearance = 30, 12
+    visible = placement.image.getchannel("A").getbbox() or (0, 0, placement.image.width, placement.image.height)
+    left, top = placement.x + visible[0], placement.y + visible[1]
+    right, bottom = placement.x + visible[2], placement.y + visible[3]
+    candidates = [
+        (left - radius - clearance, top - radius - clearance), (right + radius + clearance, top - radius - clearance),
+        (left - radius - clearance, bottom + radius + clearance), (right + radius + clearance, bottom + radius + clearance),
+        ((left + right) // 2, top - radius - clearance), ((left + right) // 2, bottom + radius + clearance),
+        (left - radius - clearance, (top + bottom) // 2), (right + radius + clearance, (top + bottom) // 2),
+    ]
+    circle = Image.new("L", (radius * 2 + 1, radius * 2 + 1), 0)
+    ImageDraw.Draw(circle).ellipse((0, 0, radius * 2, radius * 2), fill=255)
+    for x, y in candidates:
+        box = (x - radius, y - radius, x + radius + 1, y + radius + 1)
+        if box[0] < margin or box[1] < margin or box[2] > width - margin or box[3] > height - margin:
+            continue
+        bird_crop, marker_crop = birds.crop(box), markers.crop(box)
+        if not any(a and b for a, b in zip(bird_crop.getdata(), circle.getdata())) and not any(a and b for a, b in zip(marker_crop.getdata(), circle.getdata())):
+            markers.paste(255, (box[0], box[1]), circle)
+            return x, y
+    return max(margin + radius, min(width - margin - radius, left - radius - clearance)), max(margin + radius, min(height - margin - radius, top - radius - clearance))
+
+
 def _draw_legend(canvas: Image.Image, placements: list[Placement], start_x: int, paper: tuple[int, int, int], script_size: str) -> None:
     draw = ImageDraw.Draw(canvas)
     width, height = canvas.size
     draw.line((start_x, 88, start_x, height - 88), fill=(130, 108, 77), width=2)
     scale = {"small": 0.82, "medium": 1.0, "large": 1.22}[script_size]
-    title_font, name_font, latin_font = _script_font(int(42 * scale)), _script_font(int(33 * scale)), _font(int(22 * scale), italic=True)
-    draw.text((start_x + 42, 94), "Dagens fugler", fill=(74, 57, 41), font=title_font)
     available = height - 205
-    row_height = max(int(62 * scale), min(int(104 * scale), available // max(1, len(placements))))
+    row_height = max(32, min(int(104 * scale), available // max(1, len(placements))))
+    # Fit the pen-script to the row rather than allowing lower legend entries
+    # to run off a 16:9 panel on a busy day.
+    fitted_scale = min(scale, row_height / 62)
+    title_font = _script_font(int(42 * min(scale, 1.0)))
+    name_font, latin_font = _script_font(max(13, int(33 * fitted_scale))), _font(max(11, int(22 * fitted_scale)), italic=True)
+    draw.text((start_x + 42, 94), "Dagens fugler", fill=(74, 57, 41), font=title_font)
     for number, placement in enumerate(placements, start=1):
         y = 174 + (number - 1) * row_height
         _draw_number(draw, start_x + 62, y + 22, number, paper)
@@ -337,7 +379,7 @@ def collage_image(species: list[SpeciesCount], settings: PublicSettings, art_dir
     scores = [max(1, item.count) ** (0.65 if avian_exact else 0.15) for item in species]
     if avian_exact:
         count = len(species)
-        density = 0.46 if count <= 4 else 0.40 if count <= 12 else 0.34 if count <= 24 else 0.28
+        density = 0.72 if count <= 4 else 0.65 if count <= 12 else 0.55 if count <= 24 else 0.46
     area_budget = art_width * height * density
     seed = int(hashlib.sha256("|".join(item.common_name for item in species).encode()).hexdigest()[:16], 16)
     prepared: list[tuple[SpeciesCount, Image.Image]] = []
@@ -346,7 +388,7 @@ def collage_image(species: list[SpeciesCount], settings: PublicSettings, art_dir
             pose = "flight" if (seed + index) % 2 else "perched"
         else:
             pose = settings.pose_preference
-        asset = load_species_asset(art_dir, item, pose, settings.palette)
+        asset = load_species_asset(art_dir, item, pose, settings.palette, settings.asset_pack_id, settings.asset_variant)
         area = area_budget * scores[index] / sum(scores)
         if avian_exact:
             minimum = art_width * height * (0.010 if len(species) <= 8 else 0.0075 if len(species) <= 20 else 0.0055)
@@ -382,12 +424,14 @@ def collage_image(species: list[SpeciesCount], settings: PublicSettings, art_dir
         subtitle = _font(max(15, int(height * 0.016)), italic=True)
         draw.text((margin * 1.5, inset * 1.2), "Avian Visitors", fill=(74, 57, 41), font=title)
         draw.text((margin * 1.5, inset * 1.2 + int(height * 0.034)), "A horizontal field plate", fill=(110, 90, 65), font=subtitle)
+    bird_occupancy = Image.new("L", (art_width, height), 0)
+    for placement in placements:
+        bird_occupancy.paste(255, (placement.x, placement.y), placement.image.getchannel("A"))
+    marker_occupancy = Image.new("L", (art_width, height), 0)
     for number, placement in enumerate(placements, start=1):
         canvas.paste(placement.image, (placement.x, placement.y), placement.image)
         if settings.labels_enabled:
-            visible = placement.image.getchannel("A").getbbox() or (0, 0, placement.image.width, placement.image.height)
-            marker_x = placement.x + max(28, visible[0] - 16)
-            marker_y = placement.y + max(28, visible[1] - 16)
+            marker_x, marker_y = _marker_position(placement, bird_occupancy, marker_occupancy, art_width, height, margin)
             _draw_number(ImageDraw.Draw(canvas), marker_x, marker_y, number, paper)
     species_data = [{"common_name": item.species.common_name, "scientific_name": item.species.scientific_name,
                      "count": item.species.count, "confidence": item.species.confidence,
@@ -405,7 +449,7 @@ def latest_visitor_image(species: list[SpeciesCount], settings: PublicSettings, 
         return collage_image([], settings, art_dir)
     bird = max(species, key=lambda item: item.latest_at)
     pose = "perched" if settings.pose_preference == "balanced" else settings.pose_preference
-    asset = load_species_asset(art_dir, bird, pose, settings.palette)
+    asset = load_species_asset(art_dir, bird, pose, settings.palette, settings.asset_pack_id, settings.asset_variant)
     max_height = int(height * 0.82)
     max_width = int(width * 0.62)
     ratio = min(max_width / asset.width, max_height / asset.height)
