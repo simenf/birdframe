@@ -22,6 +22,36 @@ MAX_EXPANDED_BYTES = 1024 * 1024 * 1024
 SAFE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 
 
+def _avianvisitors_manifest(staging: Path, package_id: str) -> dict[str, Any] | None:
+    """Recognise an unmodified AvianVisitors illustration bundle.
+
+    Community bundles conventionally contain transparent
+    ``illustrations/<scientific-slug>.png`` + ``-2.png`` pairs and the
+    accompanying ``dims.json`` / ``masks.json`` tables, but no BirdFrame
+    manifest. Keep their layout intact and add only our small metadata file.
+    """
+    candidates = (
+        staging / "illustrations",
+        staging / "assets" / "illustrations",
+        staging / "avian" / "assets" / "illustrations",
+    )
+    illustrations = next((item for item in candidates if item.is_dir() and any(item.glob("*.png"))), None)
+    if illustrations is None:
+        return None
+    metadata: dict[str, Any] = {
+        "package_id": package_id,
+        "format": "avianvisitors-v1",
+        "illustrations": str(illustrations.relative_to(staging)),
+    }
+    for table in ("dims.json", "masks.json"):
+        paths = (staging / table, staging / "frontend" / table, staging / "avian" / "frontend" / table)
+        found = next((item for item in paths if item.is_file()), None)
+        if found:
+            metadata[table.removesuffix(".json")] = str(found.relative_to(staging))
+    (staging / "manifest.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    return metadata
+
+
 def _https_url(value: str) -> str:
     parsed = urlparse(value)
     if parsed.scheme != "https" or not parsed.netloc:
@@ -102,8 +132,9 @@ async def install_package(entry: dict[str, Any], destination: Path) -> dict[str,
                 with bundle.open(item) as source, target.open("wb") as output:
                     shutil.copyfileobj(source, output)
         manifest = staging / "manifest.json"
+        generated_manifest = _avianvisitors_manifest(staging, package_id) if not manifest.exists() else None
         if not manifest.exists():
-            raise PackageError("Package is missing manifest.json")
+            raise PackageError("Package is missing manifest.json and is not an AvianVisitors illustration bundle")
         try:
             metadata = json.loads(manifest.read_text())
         except json.JSONDecodeError as exc:

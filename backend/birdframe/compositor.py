@@ -127,10 +127,19 @@ def load_species_asset(art_dir: Path, species: SpeciesCount, pose: str, palette:
     package_root = art_dir / "packages"
     if package_root.exists():
         for package in sorted(package_root.iterdir()):
-            packaged = package / "assets" / "species" / safe / f"{pose}.png"
-            if packaged.exists():
-                with Image.open(packaged) as asset:
-                    return asset.convert("RGBA")
+            candidates = [package / "assets" / "species" / safe / f"{pose}.png"]
+            # AvianVisitors bundles use scientific-name slugs directly:
+            # <slug>.png is perched, <slug>-2.png is the flight pose.
+            avian_slug = f"{safe}{'-2' if pose == 'flight' else ''}.png"
+            candidates.extend((
+                package / "illustrations" / avian_slug,
+                package / "assets" / "illustrations" / avian_slug,
+                package / "avian" / "assets" / "illustrations" / avian_slug,
+            ))
+            for packaged in candidates:
+                if packaged.exists():
+                    with Image.open(packaged) as asset:
+                        return asset.convert("RGBA")
     return _demo_bird(species, pose, palette)
 
 
@@ -200,6 +209,57 @@ def _try_pack(items: list[tuple[SpeciesCount, Image.Image]], width: int, height:
     return placements
 
 
+def _try_pack_avianvisitors(items: list[tuple[SpeciesCount, Image.Image]], width: int, height: int, margin: int, seed: int) -> list[Placement] | None:
+    """Landscape, silhouette-aware centre-out nester matching AvianVisitors' layout discipline."""
+    scale, padding = 4, 3
+    occupancy = Image.new("L", (math.ceil(width / scale), math.ceil(height / scale)), 0)
+    rng = random.Random(seed)
+    ordered = sorted(items, key=lambda pair: pair[1].width * pair[1].height, reverse=True)
+    placements: list[Placement] = []
+
+    def place(asset: Image.Image, x: int, y: int) -> None:
+        mask = _mask(asset, scale).filter(ImageFilter.MaxFilter(padding * 2 + 1))
+        occupancy.paste(255, (x // scale, y // scale), mask)
+
+    for index, (species, asset) in enumerate(ordered):
+        if index == 0:
+            selected = ((width - asset.width) // 2, (height - asset.height) // 2)
+        else:
+            total_area = sum(item.image.width * item.image.height for item in placements) or 1
+            com_x = sum((item.x + item.image.width / 2) * item.image.width * item.image.height for item in placements) / total_area
+            com_y = sum((item.y + item.image.height / 2) * item.image.width * item.image.height for item in placements) / total_area
+            selected: tuple[int, int] | None = None
+            best_cost = float("inf")
+            phase = rng.random() * math.tau
+            max_radius = max(width, height)
+            step = max(scale, min(asset.width, asset.height) * 0.05)
+            for radius_index in range(max(1, int(max_radius / step))):
+                radius = radius_index * step
+                samples = max(36, int(radius / 1.6))
+                found = False
+                for sample in range(samples):
+                    theta = phase + sample / samples * math.tau
+                    x = int(width / 2 + radius * 2.1 * math.cos(theta) - asset.width / 2)
+                    y = int(height / 2 + radius * math.sin(theta) - asset.height / 2)
+                    if x < margin or y < margin or x + asset.width > width - margin or y + asset.height > height - margin:
+                        continue
+                    if _collides(occupancy, asset, x, y, scale):
+                        continue
+                    cost = math.hypot((x + asset.width / 2 - com_x) / 2.1, y + asset.height / 2 - com_y) + rng.random() * step * 0.5
+                    if cost < best_cost:
+                        selected, best_cost, found = (x, y), cost, True
+                if found:
+                    break
+            if selected is None:
+                return None
+        x, y = selected
+        if x < margin or y < margin or x + asset.width > width - margin or y + asset.height > height - margin:
+            return None
+        place(asset, x, y)
+        placements.append(Placement(species, asset, x, y))
+    return placements
+
+
 def _font(size: int, *, italic: bool = False) -> ImageFont.ImageFont:
     names = (
         "/usr/share/fonts/truetype/texgyre/texgyrepagella-italic.otf",
@@ -209,6 +269,19 @@ def _font(size: int, *, italic: bool = False) -> ImageFont.ImageFont:
         "TeXGyrePagella-Regular.otf", "DejaVuSerif.ttf",
     )
     for name in names:
+        try:
+            return ImageFont.truetype(name, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def _script_font(size: int) -> ImageFont.ImageFont:
+    """A restrained copperplate-like hand for the natural-history legend."""
+    for name in (
+        "/usr/share/fonts/opentype/urw-base35/Z003-MediumItalic.otf",
+        "Z003-MediumItalic.otf", "URW Chancery L Italic", "DejaVuSerif-Italic.ttf",
+    ):
         try:
             return ImageFont.truetype(name, size)
         except OSError:
@@ -234,7 +307,7 @@ def _draw_legend(canvas: Image.Image, placements: list[Placement], start_x: int,
     width, height = canvas.size
     draw.line((start_x, 88, start_x, height - 88), fill=(130, 108, 77), width=2)
     scale = {"small": 0.82, "medium": 1.0, "large": 1.22}[script_size]
-    title_font, name_font, latin_font = _font(int(42 * scale), italic=True), _font(int(31 * scale), italic=True), _font(int(22 * scale), italic=True)
+    title_font, name_font, latin_font = _script_font(int(42 * scale)), _script_font(int(33 * scale)), _font(int(22 * scale), italic=True)
     draw.text((start_x + 42, 94), "Dagens fugler", fill=(74, 57, 41), font=title_font)
     available = height - 205
     row_height = max(int(62 * scale), min(int(104 * scale), available // max(1, len(placements))))
@@ -254,13 +327,17 @@ def collage_image(species: list[SpeciesCount], settings: PublicSettings, art_dir
         return canvas, []
     paper = _hex_rgb(settings.paper_tone)
     avian_style = settings.collage_style == "avianvisitors_horizontal"
+    avian_exact = settings.collage_style == "avianvisitors_exact"
     legend_width = int(width * (0.26 if avian_style else 0.28)) if settings.labels_enabled else 0
     art_width = width - legend_width
     density = {"sparse": 0.52, "standard": 0.68, "full": 0.80}[settings.collage_density]
     if avian_style:
         density = min(0.84, density + 0.06)
     # Counts should influence prominence, not turn a frequent bird into a giant.
-    scores = [1 + 0.15 * math.log1p(max(1, item.count)) for item in species]
+    scores = [max(1, item.count) ** (0.65 if avian_exact else 0.15) for item in species]
+    if avian_exact:
+        count = len(species)
+        density = 0.46 if count <= 4 else 0.40 if count <= 12 else 0.34 if count <= 24 else 0.28
     area_budget = art_width * height * density
     seed = int(hashlib.sha256("|".join(item.common_name for item in species).encode()).hexdigest()[:16], 16)
     prepared: list[tuple[SpeciesCount, Image.Image]] = []
@@ -270,7 +347,11 @@ def collage_image(species: list[SpeciesCount], settings: PublicSettings, art_dir
         else:
             pose = settings.pose_preference
         asset = load_species_asset(art_dir, item, pose, settings.palette)
-        prepared.append((item, _resize_for_area(asset, area_budget * scores[index] / sum(scores))))
+        area = area_budget * scores[index] / sum(scores)
+        if avian_exact:
+            minimum = art_width * height * (0.010 if len(species) <= 8 else 0.0075 if len(species) <= 20 else 0.0055)
+            area = max(minimum, area)
+        prepared.append((item, _resize_for_area(asset, area)) )
     prepared.sort(key=lambda pair: pair[1].width * pair[1].height, reverse=True)
     margin = max(36, int(min(width, height) * 0.035))
     header_height = int(height * 0.085) if avian_style else 0
@@ -278,7 +359,8 @@ def collage_image(species: list[SpeciesCount], settings: PublicSettings, art_dir
     for shrink in range(10):
         factor = 0.93 ** shrink
         scaled = [(item, asset.resize((max(1, int(asset.width * factor)), max(1, int(asset.height * factor))), Image.Resampling.LANCZOS)) for item, asset in prepared]
-        placements = _try_pack(scaled, art_width, height - header_height, margin, seed)
+        pack = _try_pack_avianvisitors if avian_exact else _try_pack
+        placements = pack(scaled, art_width, height - header_height, margin, seed)
         if placements:
             if header_height:
                 placements = [Placement(item.species, item.image, item.x, item.y + header_height) for item in placements]

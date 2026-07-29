@@ -20,7 +20,7 @@ WORKDIR /app
 
 # libjpeg/zlib are needed by Pillow; tini forwards shutdown signals cleanly.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      libjpeg62-turbo zlib1g tini gosu fonts-dejavu-core fonts-texgyre \
+      libjpeg62-turbo zlib1g tini gosu fonts-dejavu-core fonts-texgyre fonts-urw-base35 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/ ./backend/

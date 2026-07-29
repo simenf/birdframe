@@ -32,7 +32,7 @@ class PublicSettings(BaseModel):
     output_height: int = Field(default=2160, ge=360, le=4320)
     labels_enabled: bool = False
     legend_script_size: Literal["small", "medium", "large"] = "medium"
-    collage_style: Literal["classic", "avianvisitors_horizontal"] = "classic"
+    collage_style: Literal["classic", "avianvisitors_horizontal", "avianvisitors_exact"] = "classic"
     paper_tone: str = "#f2e4c9"
     palette: Literal["classic", "muted", "vivid"] = "classic"
     collage_density: Literal["sparse", "standard", "full"] = "standard"
