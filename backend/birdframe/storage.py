@@ -209,10 +209,11 @@ class Store:
         with self.connection() as db:
             db.execute("INSERT INTO logs(level,message,created_at) VALUES(?,?,?)", (level.upper(), message[:2000], utcnow()))
 
-    def logs(self, limit: int = 100) -> list[dict[str, str | int]]:
+    def logs(self, limit: int = 100, offset: int = 0) -> tuple[list[dict[str, str | int]], int]:
         with self.connection() as db:
-            rows = db.execute("SELECT id,level,message,created_at FROM logs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-        return [dict(row) for row in rows]
+            rows = db.execute("SELECT id,level,message,created_at FROM logs ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)).fetchall()
+            total = int(db.execute("SELECT COUNT(*) FROM logs").fetchone()[0])
+        return [dict(row) for row in rows], total
 
     def record_tv_upload(self, composition_id: int, content_id: str) -> str | None:
         """Record a successful owned upload and return the prior owned content id."""

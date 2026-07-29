@@ -2,6 +2,8 @@ export type Health = { status: string; version: string; composition_revision: nu
 export type Detection = { id: string; common_name: string; scientific_name?: string; confidence?: number; detected_at: string; source_type?: string };
 export type Display = { revision?: number; mode?: string; image_url?: string; created_at?: string; species?: Array<{ common_name: string; count?: number }> };
 export type RecentBird = { common_name: string; scientific_name?: string; count: number; confidence?: number; latest_at: string; image_url: string };
+export type LogEntry = { id: number; level: string; message: string; created_at: string };
+export type LogPage = { items: LogEntry[]; total: number; limit: number; offset: number };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/v1${path}`, { headers: { "Content-Type": "application/json", ...(init?.headers || {}) }, ...init });
@@ -22,5 +24,5 @@ export const api = {
   generateArt: (body: { species: Array<{ common_name: string; scientific_name: string }>; model?: string; poses?: "one" | "both" }) => request<{ id: number }>("/art/generate", { method: "POST", body: JSON.stringify(body) }),
   packs: () => request<Array<{ id: string; illustrations: number; sketches: number }>>("/art/packs"),
   jobs: () => request<Array<{ id: number; kind: string; status: string; error?: string; updated_at: string }>>("/jobs"),
-  logs: () => request<Array<{ id: number; level: string; message: string; created_at: string }>>("/logs?limit=100"),
+  logs: (offset = 0, limit = 25) => request<LogPage>(`/logs?limit=${limit}&offset=${offset}`),
 };

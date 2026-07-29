@@ -448,8 +448,16 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         return store.jobs()
 
     @app.get("/api/v1/logs")
-    async def logs(limit: int = 100) -> list[dict[str, object]]:
-        return store.logs(max(1, min(limit, 500)))
+    async def logs(limit: int = 100, offset: int | None = None) -> list[dict[str, object]] | dict[str, object]:
+        page_size = max(1, min(limit, 100))
+        page_offset = max(0, offset or 0)
+        items, total = store.logs(page_size, page_offset)
+        # Keep the original list response for small integrations that already
+        # consume /logs. The new web pane requests offset=0 and receives page
+        # metadata for navigation.
+        if offset is None:
+            return items
+        return {"items": items, "total": total, "limit": page_size, "offset": page_offset}
 
     @app.post("/api/v1/sources/test")
     async def test_source(payload: SourceTestRequest) -> dict[str, object]:
