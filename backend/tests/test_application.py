@@ -9,7 +9,7 @@ def test_detection_generates_identical_current_display_artifact(tmp_path: Path):
     app = create_app(tmp_path)
     with TestClient(app) as client:
         settings = client.get("/api/v1/settings").json()
-        settings.update({"output_width": 640, "output_height": 360, "display_api_enabled": True})
+        settings.update({"output_width": 640, "output_height": 360, "display_api_enabled": True, "collage_style": "avianvisitors_horizontal"})
         assert client.put("/api/v1/settings", json=settings).status_code == 200
         created = client.post("/api/v1/detections", json={
             "common_name": "Eurasian Blackbird", "scientific_name": "Turdus merula", "confidence": 0.91,
@@ -73,6 +73,8 @@ def test_settings_survive_application_restart(tmp_path: Path):
             "detection_source": "birdweather_public",
             "birdweather_public_station_id": 2505,
             "tv_host": "192.168.1.134",
+            "collage_style": "avianvisitors_horizontal",
+            "legend_script_size": "large",
             "openrouter_api_key": "sk-or-v1-persistent-test-key",
         })
         assert client.put("/api/v1/settings", json=settings).status_code == 200
@@ -83,6 +85,8 @@ def test_settings_survive_application_restart(tmp_path: Path):
         assert saved["location_label"] == "Oslo, Norway"
         assert saved["birdweather_public_station_id"] == 2505
         assert saved["tv_host"] == "192.168.1.134"
+        assert saved["collage_style"] == "avianvisitors_horizontal"
+        assert saved["legend_script_size"] == "large"
         assert saved["has_openrouter_api_key"] is True
 
 

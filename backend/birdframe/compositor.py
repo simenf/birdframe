@@ -201,7 +201,13 @@ def _try_pack(items: list[tuple[SpeciesCount, Image.Image]], width: int, height:
 
 
 def _font(size: int, *, italic: bool = False) -> ImageFont.ImageFont:
-    names = ("DejaVuSerif-Italic.ttf", "DejaVuSerif.ttf") if italic else ("DejaVuSerif.ttf",)
+    names = (
+        "/usr/share/fonts/truetype/texgyre/texgyrepagella-italic.otf",
+        "TeXGyrePagella-Italic.otf", "DejaVuSerif-Italic.ttf", "DejaVuSerif.ttf",
+    ) if italic else (
+        "/usr/share/fonts/truetype/texgyre/texgyrepagella-regular.otf",
+        "TeXGyrePagella-Regular.otf", "DejaVuSerif.ttf",
+    )
     for name in names:
         try:
             return ImageFont.truetype(name, size)
@@ -223,14 +229,15 @@ def _draw_number(draw: ImageDraw.ImageDraw, x: int, y: int, number: int, paper: 
     draw.text((x - (box[2] - box[0]) / 2, y - (box[3] - box[1]) / 2 - 2), text, fill=(74, 57, 41), font=font)
 
 
-def _draw_legend(canvas: Image.Image, placements: list[Placement], start_x: int, paper: tuple[int, int, int]) -> None:
+def _draw_legend(canvas: Image.Image, placements: list[Placement], start_x: int, paper: tuple[int, int, int], script_size: str) -> None:
     draw = ImageDraw.Draw(canvas)
     width, height = canvas.size
     draw.line((start_x, 88, start_x, height - 88), fill=(130, 108, 77), width=2)
-    title_font, name_font, latin_font = _font(42, italic=True), _font(31, italic=True), _font(22, italic=True)
+    scale = {"small": 0.82, "medium": 1.0, "large": 1.22}[script_size]
+    title_font, name_font, latin_font = _font(int(42 * scale), italic=True), _font(int(31 * scale), italic=True), _font(int(22 * scale), italic=True)
     draw.text((start_x + 42, 94), "Dagens fugler", fill=(74, 57, 41), font=title_font)
     available = height - 205
-    row_height = max(62, min(104, available // max(1, len(placements))))
+    row_height = max(int(62 * scale), min(int(104 * scale), available // max(1, len(placements))))
     for number, placement in enumerate(placements, start=1):
         y = 174 + (number - 1) * row_height
         _draw_number(draw, start_x + 62, y + 22, number, paper)
@@ -246,9 +253,12 @@ def collage_image(species: list[SpeciesCount], settings: PublicSettings, art_dir
         draw.text((width // 2 - 130, height // 2), "Waiting for birds…", fill=(74, 57, 41), font=None)
         return canvas, []
     paper = _hex_rgb(settings.paper_tone)
-    legend_width = int(width * 0.28) if settings.labels_enabled else 0
+    avian_style = settings.collage_style == "avianvisitors_horizontal"
+    legend_width = int(width * (0.26 if avian_style else 0.28)) if settings.labels_enabled else 0
     art_width = width - legend_width
     density = {"sparse": 0.52, "standard": 0.68, "full": 0.80}[settings.collage_density]
+    if avian_style:
+        density = min(0.84, density + 0.06)
     # Counts should influence prominence, not turn a frequent bird into a giant.
     scores = [1 + 0.15 * math.log1p(max(1, item.count)) for item in species]
     area_budget = art_width * height * density
@@ -263,12 +273,15 @@ def collage_image(species: list[SpeciesCount], settings: PublicSettings, art_dir
         prepared.append((item, _resize_for_area(asset, area_budget * scores[index] / sum(scores))))
     prepared.sort(key=lambda pair: pair[1].width * pair[1].height, reverse=True)
     margin = max(36, int(min(width, height) * 0.035))
+    header_height = int(height * 0.085) if avian_style else 0
     placements = None
     for shrink in range(10):
         factor = 0.93 ** shrink
         scaled = [(item, asset.resize((max(1, int(asset.width * factor)), max(1, int(asset.height * factor))), Image.Resampling.LANCZOS)) for item, asset in prepared]
-        placements = _try_pack(scaled, art_width, height, margin, seed)
+        placements = _try_pack(scaled, art_width, height - header_height, margin, seed)
         if placements:
+            if header_height:
+                placements = [Placement(item.species, item.image, item.x, item.y + header_height) for item in placements]
             break
     if not placements:
         # a guaranteed, bounded fallback keeps an art image available even for huge species lists
@@ -277,8 +290,16 @@ def collage_image(species: list[SpeciesCount], settings: PublicSettings, art_dir
             scale = min(0.35, 0.75 / math.sqrt(len(prepared[:12])))
             image = asset.resize((int(asset.width * scale), int(asset.height * scale)), Image.Resampling.LANCZOS)
             x = margin + (index % 4) * (art_width - 2 * margin) // 4 + 24
-            y = margin + (index // 4) * (height - 2 * margin) // 3 + 24
+            y = header_height + margin + (index // 4) * (height - header_height - 2 * margin) // 3 + 24
             placements.append(Placement(item, image, x, y))
+    if avian_style:
+        draw = ImageDraw.Draw(canvas)
+        inset = max(24, min(width, height) // 60)
+        draw.rectangle((inset, inset, art_width - inset, height - inset), outline=(128, 103, 72), width=max(2, inset // 10))
+        title = _font(max(23, int(height * 0.027)), italic=True)
+        subtitle = _font(max(15, int(height * 0.016)), italic=True)
+        draw.text((margin * 1.5, inset * 1.2), "Avian Visitors", fill=(74, 57, 41), font=title)
+        draw.text((margin * 1.5, inset * 1.2 + int(height * 0.034)), "A horizontal field plate", fill=(110, 90, 65), font=subtitle)
     for number, placement in enumerate(placements, start=1):
         canvas.paste(placement.image, (placement.x, placement.y), placement.image)
         if settings.labels_enabled:
@@ -291,7 +312,7 @@ def collage_image(species: list[SpeciesCount], settings: PublicSettings, art_dir
                      "latest_at": item.species.latest_at, "x": item.x, "y": item.y,
                      "width": item.image.width, "height": item.image.height} for item in placements]
     if settings.labels_enabled:
-        _draw_legend(canvas, placements, art_width, paper)
+        _draw_legend(canvas, placements, art_width, paper, settings.legend_script_size)
     return canvas, species_data
 
 
