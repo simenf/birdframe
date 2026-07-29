@@ -369,7 +369,9 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     async def display_json(request: Request) -> dict[str, object]:
         row = store.current_composition() or await service.render()
         base = str(request.base_url).rstrip("/")
-        return composition_summary(row).model_dump(mode="json") | {"image_url": f"{base}/api/v1/display/current.jpg"}
+        # The display endpoint remains stable for TVs and other integrations,
+        # while the revision query gives browsers a new cache key after rebuilds.
+        return composition_summary(row).model_dump(mode="json") | {"image_url": f"{base}/api/v1/display/current.jpg?revision={row['revision']}"}
 
     @app.get("/api/v1/display/events", dependencies=[Depends(display_guard)])
     async def display_events() -> StreamingResponse:

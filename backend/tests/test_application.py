@@ -16,6 +16,7 @@ def test_detection_generates_identical_current_display_artifact(tmp_path: Path):
         })
         assert created.status_code == 201
         metadata = client.get("/api/v1/display/current.json").json()
+        assert metadata["image_url"].endswith(f"?revision={metadata['revision']}")
         image = client.get("/api/v1/display/current.jpg")
         assert image.status_code == 200
         assert image.headers["etag"].strip('"') == metadata["sha256"]
