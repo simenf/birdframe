@@ -111,3 +111,44 @@ class SourceTestRequest(BaseModel):
     url: str = ""
     token: str = ""
     station_id: int | None = Field(default=None, ge=1)
+
+
+class BootstrapRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=64, pattern=r"^[a-zA-Z0-9_.-]+$")
+    password: str = Field(min_length=8, max_length=200)
+
+
+class LoginRequest(BootstrapRequest):
+    pass
+
+
+class UserCreate(BootstrapRequest):
+    is_admin: bool = False
+
+
+class UserOut(BaseModel):
+    id: int
+    username: str
+    is_admin: bool
+    created_at: datetime
+
+
+class ApiKeyCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+
+class ApiKeyOut(BaseModel):
+    id: int
+    name: str
+    prefix: str
+    created_at: datetime
+    last_used_at: datetime | None = None
+
+
+class ApiKeyCreated(ApiKeyOut):
+    key: str
+
+
+class AuthMe(BaseModel):
+    username: str
+    is_admin: bool

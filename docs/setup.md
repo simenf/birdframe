@@ -4,6 +4,11 @@ The first browser visit opens a resumable wizard. Settings are persisted under
 the BirdFrame data directory; provider tokens are never returned to the browser
 after saving.
 
+Before the wizard, the first visitor creates the administrator account (this
+is also where the web UI's session API key is issued). Later visitors sign in
+with that account or with accounts the admin adds under Settings → API keys
+and users.
+
 1. **Privacy and license.** Confirm the non-commercial licensing notice and
    review the external data flows.
 2. **Location.** Enter/search a location, verify latitude/longitude, choose

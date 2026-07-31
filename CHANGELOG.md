@@ -17,6 +17,13 @@
 * Fixed first-run routing: the health endpoint now reports whether the setup
   wizard has been completed, so a fresh install opens the wizard instead of
   landing on an empty dashboard.
+* Added accounts and API keys: the first account created is the admin, logins
+  issue per-account API keys, and the management API requires a valid key.
+  Settings gained an API keys and users panel with key generation, revocation,
+  and (admin-only) user management.
+* Moved collage style and display/TV controls into the Setup guide as Artwork
+  and Display & TV wizard steps; Settings now covers artwork generation, the
+  display API, and asset packs.
 
 ## 0.1.0
 

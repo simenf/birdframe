@@ -9,6 +9,7 @@ from birdframe import main as birdframe_main
 from birdframe.adapters import wake_on_lan
 from birdframe.main import create_app, in_quiet_hours
 from birdframe.schemas import PublicSettings
+from tests.helpers import authed
 
 
 def _settings(client: TestClient, **updates) -> dict:
@@ -20,6 +21,7 @@ def _settings(client: TestClient, **updates) -> dict:
 def test_confidence_threshold_gates_artwork_but_keeps_history(tmp_path):
     app = create_app(tmp_path)
     with TestClient(app) as client:
+        authed(client)
         _settings(client, confidence_threshold=0.9)
         low = client.post("/api/v1/detections", json={
             "common_name": "Quiet Finch", "scientific_name": "Fringilla quietus",
@@ -44,6 +46,7 @@ def test_confidence_threshold_gates_artwork_but_keeps_history(tmp_path):
 def test_duplicate_cooldown_skips_rerender_for_repeat_species(tmp_path):
     app = create_app(tmp_path)
     with TestClient(app) as client:
+        authed(client)
         _settings(client, duplicate_cooldown_minutes=60)
 
         def revision() -> int:
@@ -136,6 +139,7 @@ class FakeSamsung:
 async def test_automatic_tv_sync_respects_quiet_hours_and_wakes(tmp_path, monkeypatch):
     app = create_app(tmp_path)
     with TestClient(app) as client:
+        authed(client)
         _settings(client, tv_host="10.0.0.3", tv_auto_update_enabled=True, tv_wake_enabled=True,
                   tv_mac="aa:bb:cc:dd:ee:ff", tv_update_minutes=1)
         client.post("/api/v1/detections", json={
@@ -169,6 +173,7 @@ async def test_automatic_tv_sync_respects_quiet_hours_and_wakes(tmp_path, monkey
 async def test_automatic_tv_sync_continues_when_wake_fails(tmp_path, monkeypatch):
     app = create_app(tmp_path)
     with TestClient(app) as client:
+        authed(client)
         _settings(client, tv_host="10.0.0.3", tv_auto_update_enabled=True, tv_wake_enabled=True,
                   tv_mac="bad-mac", tv_update_minutes=1)
         client.post("/api/v1/detections", json={

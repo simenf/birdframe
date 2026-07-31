@@ -46,9 +46,10 @@ docker build -t birdframe:dev .
 
 Required coverage includes input normalization/deduplication, display policy,
 safe package extraction, secret redaction, deterministic collage golden images,
-and the invariant that the current-image response digest equals the artifact
-sent to the Samsung client. Contract-test both detection adapters and use a fake
-Samsung Art Mode server for failure paths.
+API authentication (first-admin bootstrap, login, key generation/revocation,
+admin-only user management), and the invariant that the current-image response
+digest equals the artifact sent to the Samsung client. Contract-test both
+detection adapters and use a fake Samsung Art Mode server for failure paths.
 
 ## Release checklist
 

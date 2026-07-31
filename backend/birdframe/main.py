@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 from io import BytesIO
 import logging
 import os
@@ -23,10 +24,13 @@ from PIL import Image
 
 from .adapters import (AdapterError, BirdNETGoClient, BirdWeatherClient, OpenRouterClient,
                        ProviderUnavailable, PublicBirdWeatherClient, SamsungFrameClient, wake_on_lan)
+from .auth import api_key_prefix, generate_api_key, hash_api_key, hash_password
 from .compositor import SpeciesCount, collage_image, group_detections, latest_visitor_image, load_species_asset
 from .packages import MAX_ARCHIVE_BYTES, PackageError, SAFE_ID, fetch_catalog, install_archive, install_package, install_package_url
-from .schemas import (CompositionSummary, Detection, DetectionCreate, JobRequest, PackageInstallRequest,
-                      PackageUrlInstallRequest, PublicSettings, SettingsResponse, SettingsUpdate, SourceTestRequest)
+from .schemas import (ApiKeyCreate, ApiKeyCreated, ApiKeyOut, AuthMe, BootstrapRequest, CompositionSummary,
+                      Detection, DetectionCreate, JobRequest, LoginRequest, PackageInstallRequest,
+                      PackageUrlInstallRequest, PublicSettings, SettingsResponse, SettingsUpdate,
+                      SourceTestRequest, UserCreate, UserOut)
 from .storage import Store
 
 logger = logging.getLogger("birdframe")
@@ -313,6 +317,8 @@ async def source_worker(service: BirdFrameService, stop: asyncio.Event) -> None:
                         await service.render()
                         activity = "Seeded the previous 24 hours" if seeding else "Imported new detections"
                         service.log("info", f"{activity} from public BirdWeather station {settings.birdweather_public_station_id}")
+                    elif seeding:
+                        service.log("info", f"Public BirdWeather station {settings.birdweather_public_station_id} returned no detections in the last 24 hours")
                     cursor = "live"
                 await pause(settings.birdweather_poll_seconds)
             else:
@@ -397,13 +403,48 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     app.state.service = service
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+    auth_free_prefixes = (
+        "/api/v1/health",
+        "/api/v1/auth/bootstrap",
+        "/api/v1/auth/login",
+        "/api/v1/display",
+        "/api/v1/birds/image.png",
+    )
+
+    @app.middleware("http")
+    async def require_api_key(request: Request, call_next):
+        """Require a valid API key for the management API.
+
+        The health probe, login/bootstrap flows, and read-only display/image
+        endpoints stay reachable without a key.
+        """
+        path = request.url.path
+        if path.startswith("/api/v1") and not path.startswith(auth_free_prefixes):
+            authorization = request.headers.get("Authorization", "")
+            key = authorization.removeprefix("Bearer ").strip() if authorization.startswith("Bearer ") else ""
+            if not key:
+                return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"detail": "API key is required"})
+            user = store.user_for_api_key(hash_api_key(key))
+            if user is None:
+                return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"detail": "Invalid API key"})
+            request.state.user = user
+            store.touch_api_key_usage(hash_api_key(key))
+        return await call_next(request)
+
     def display_guard(request: Request) -> None:
         settings = store.get_settings()
         if not settings.display_api_enabled:
             raise HTTPException(status_code=404, detail="Display API is disabled")
         if settings.display_api_require_token:
-            supplied = request.headers.get("Authorization", "").removeprefix("Bearer ") or request.query_params.get("token", "")
-            if not supplied or supplied != store.secret("display_api_token"):
+            expected = store.secret("display_api_token") or ""
+            header_token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+            query_token = request.query_params.get("token", "")
+            # Accept either the header or the query token, so clients that
+            # cannot set headers (e.g. <img> tags) still work even when the
+            # browser sends an unrelated BirdFrame API key as Bearer.
+            def matches(candidate: str) -> bool:
+                return bool(candidate) and hmac.compare_digest(candidate, expected)
+            if not matches(header_token) and not matches(query_token):
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Display token is required")
 
     @app.get("/api/v1/health")
@@ -414,7 +455,73 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             "version": "0.1.0",
             "composition_revision": current["revision"] if current else None,
             "needs_setup": store.needs_setup(),
+            "needs_admin": store.user_count() == 0,
         }
+
+    @app.post("/api/v1/auth/bootstrap")
+    async def bootstrap(payload: BootstrapRequest) -> dict[str, object]:
+        """Create the first user; the first account is always the admin."""
+        if store.user_count() > 0:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="An admin user already exists")
+        user = store.create_user(payload.username, hash_password(payload.password), is_admin=True)
+        key = generate_api_key()
+        store.create_api_key(user["id"], "Admin bootstrap", hash_api_key(key), api_key_prefix(key))
+        service.log("info", f"Created initial admin user {payload.username}")
+        return {"username": user["username"], "is_admin": True, "api_key": key}
+
+    @app.post("/api/v1/auth/login")
+    async def login(payload: LoginRequest) -> dict[str, object]:
+        user = store.verify_login(payload.username, payload.password)
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password")
+        key = generate_api_key()
+        store.create_api_key(user["id"], "Web login", hash_api_key(key), api_key_prefix(key))
+        return {"username": user["username"], "is_admin": user["is_admin"], "api_key": key}
+
+    @app.post("/api/v1/auth/logout")
+    async def logout(request: Request) -> dict[str, bool]:
+        authorization = request.headers.get("Authorization", "")
+        key = authorization.removeprefix("Bearer ").strip() if authorization.startswith("Bearer ") else ""
+        if key:
+            store.revoke_api_key_by_hash(hash_api_key(key))
+        return {"ok": True}
+
+    @app.get("/api/v1/auth/me", response_model=AuthMe)
+    async def auth_me(request: Request) -> AuthMe:
+        user = request.state.user
+        return AuthMe(username=user["username"], is_admin=user["is_admin"])
+
+    @app.get("/api/v1/auth/api-keys", response_model=list[ApiKeyOut])
+    async def list_api_keys(request: Request) -> list[dict[str, object]]:
+        return store.list_api_keys(request.state.user["id"])
+
+    @app.post("/api/v1/auth/api-keys", response_model=ApiKeyCreated, status_code=201)
+    async def create_api_key(request: Request, payload: ApiKeyCreate) -> dict[str, object]:
+        user = request.state.user
+        key = generate_api_key()
+        row = store.create_api_key(user["id"], payload.name, hash_api_key(key), api_key_prefix(key))
+        return {**row, "key": key}
+
+    @app.delete("/api/v1/auth/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
+    async def revoke_api_key(request: Request, key_id: int) -> Response:
+        if not store.revoke_api_key(request.state.user["id"], key_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.get("/api/v1/users", response_model=list[UserOut])
+    async def list_users(request: Request) -> list[dict[str, object]]:
+        if not request.state.user["is_admin"]:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+        return store.list_users()
+
+    @app.post("/api/v1/users", response_model=UserOut, status_code=201)
+    async def create_user(request: Request, payload: UserCreate) -> dict[str, object]:
+        if not request.state.user["is_admin"]:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+        try:
+            return store.create_user(payload.username, hash_password(payload.password), is_admin=payload.is_admin)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
     @app.get("/api/v1/settings", response_model=SettingsResponse)
     async def get_settings() -> SettingsResponse:

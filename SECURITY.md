@@ -9,5 +9,8 @@ before opening a public issue. Include the affected version, deployment mode,
 reproduction steps, and a suggested mitigation if available. There is no
 guaranteed response-time or supported security-maintenance window yet.
 
-Until a reverse proxy and authentication layer are configured, keep port 8765
-on a trusted LAN and do not expose it directly to the internet.
+BirdFrame now ships an account layer: the first visitor creates the admin
+account, and all management API calls require an API key tied to a user. Keep
+port 8765 on a trusted LAN and do not expose it directly to the internet; a
+reverse proxy with TLS is still recommended for anything beyond a trusted
+home network.

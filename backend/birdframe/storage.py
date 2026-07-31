@@ -10,6 +10,7 @@ from typing import Any, Iterator
 
 from cryptography.fernet import Fernet
 
+from .auth import verify_password
 from .schemas import Detection, DetectionCreate, PublicSettings, SettingsResponse, SettingsUpdate
 
 
@@ -92,6 +93,22 @@ class Store:
                   level TEXT NOT NULL,
                   message TEXT NOT NULL,
                   created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS users (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  username TEXT NOT NULL UNIQUE,
+                  password_hash TEXT NOT NULL,
+                  is_admin INTEGER NOT NULL DEFAULT 0,
+                  created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS api_keys (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  user_id INTEGER NOT NULL REFERENCES users(id),
+                  name TEXT NOT NULL,
+                  key_hash TEXT NOT NULL UNIQUE,
+                  prefix TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  last_used_at TEXT
                 );
                 """
             )
@@ -289,3 +306,95 @@ class Store:
             log_cursor = db.execute("DELETE FROM logs WHERE created_at < ?", (log_cutoff,))
             removed_logs = log_cursor.rowcount
         return {"compositions": len(removed), "files": removed_files, "logs": removed_logs}
+
+    def user_count(self) -> int:
+        with self.connection() as db:
+            row = db.execute("SELECT COUNT(*) FROM users").fetchone()
+        return int(row[0])
+
+    def create_user(self, username: str, password_hash: str, *, is_admin: bool = False) -> dict[str, Any]:
+        with self.connection() as db:
+            try:
+                cursor = db.execute(
+                    "INSERT INTO users(username,password_hash,is_admin,created_at) VALUES(?,?,?,?)",
+                    (username, password_hash, int(is_admin), utcnow()),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ValueError("Username is already taken") from exc
+            identifier = int(cursor.lastrowid)
+        return self.get_user(identifier)
+
+    def get_user(self, identifier: int) -> dict[str, Any]:
+        with self.connection() as db:
+            row = db.execute("SELECT * FROM users WHERE id=?", (identifier,)).fetchone()
+        return self._user_row(dict(row)) if row else {}
+
+    def get_user_by_username(self, username: str) -> dict[str, Any] | None:
+        with self.connection() as db:
+            row = db.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+        return self._user_row(dict(row)) if row else None
+
+    def list_users(self) -> list[dict[str, Any]]:
+        with self.connection() as db:
+            rows = db.execute("SELECT * FROM users ORDER BY id").fetchall()
+        return [self._user_row(dict(row)) for row in rows]
+
+    def verify_login(self, username: str, password: str) -> dict[str, Any] | None:
+        user = self.get_user_by_username(username)
+        if user is None or not verify_password(password, user["password_hash"]):
+            return None
+        return user
+
+    def create_api_key(self, user_id: int, name: str, key_hash: str, prefix: str) -> dict[str, Any]:
+        with self.connection() as db:
+            cursor = db.execute(
+                "INSERT INTO api_keys(user_id,name,key_hash,prefix,created_at) VALUES(?,?,?,?,?)",
+                (user_id, name, key_hash, prefix, utcnow()),
+            )
+            identifier = int(cursor.lastrowid)
+        return self.get_api_key(identifier)
+
+    def get_api_key(self, identifier: int) -> dict[str, Any]:
+        with self.connection() as db:
+            row = db.execute("SELECT * FROM api_keys WHERE id=?", (identifier,)).fetchone()
+        return self._api_key_row(dict(row)) if row else {}
+
+    def list_api_keys(self, user_id: int) -> list[dict[str, Any]]:
+        with self.connection() as db:
+            rows = db.execute("SELECT * FROM api_keys WHERE user_id=? ORDER BY id", (user_id,)).fetchall()
+        return [self._api_key_row(dict(row)) for row in rows]
+
+    def revoke_api_key(self, user_id: int, identifier: int) -> bool:
+        with self.connection() as db:
+            cursor = db.execute("DELETE FROM api_keys WHERE id=? AND user_id=?", (identifier, user_id))
+        return cursor.rowcount > 0
+
+    def revoke_api_key_by_hash(self, key_hash: str) -> bool:
+        with self.connection() as db:
+            cursor = db.execute("DELETE FROM api_keys WHERE key_hash=?", (key_hash,))
+        return cursor.rowcount > 0
+
+    def user_for_api_key(self, key_hash: str) -> dict[str, Any] | None:
+        with self.connection() as db:
+            row = db.execute(
+                "SELECT users.* FROM api_keys JOIN users ON users.id=api_keys.user_id WHERE api_keys.key_hash=?",
+                (key_hash,),
+            ).fetchone()
+        return self._user_row(dict(row)) if row else None
+
+    def touch_api_key_usage(self, key_hash: str, now: datetime | None = None) -> None:
+        stamp = (now or datetime.now(UTC)).isoformat()
+        with self.connection() as db:
+            db.execute(
+                "UPDATE api_keys SET last_used_at=? WHERE key_hash=? AND (last_used_at IS NULL OR last_used_at < ?)",
+                (stamp, key_hash, stamp),
+            )
+
+    @staticmethod
+    def _user_row(row: dict[str, Any]) -> dict[str, Any]:
+        row["is_admin"] = bool(row["is_admin"])
+        return row
+
+    @staticmethod
+    def _api_key_row(row: dict[str, Any]) -> dict[str, Any]:
+        return row

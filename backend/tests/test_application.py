@@ -3,11 +3,13 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from birdframe.main import create_app
+from tests.helpers import authed
 
 
 def test_detection_generates_identical_current_display_artifact(tmp_path: Path):
     app = create_app(tmp_path)
     with TestClient(app) as client:
+        authed(client)
         settings = client.get("/api/v1/settings").json()
         settings.update({"output_width": 640, "output_height": 360, "display_api_enabled": True, "collage_style": "avianvisitors_horizontal"})
         assert client.put("/api/v1/settings", json=settings).status_code == 200
@@ -28,6 +30,7 @@ def test_detection_generates_identical_current_display_artifact(tmp_path: Path):
 def test_display_api_token_is_separate_from_settings_secrets(tmp_path: Path):
     app = create_app(tmp_path)
     with TestClient(app) as client:
+        authed(client)
         settings = client.get("/api/v1/settings").json()
         settings.update({"display_api_require_token": True, "display_api_token": "this-is-a-long-display-token"})
         saved = client.put("/api/v1/settings", json=settings)
@@ -41,6 +44,7 @@ def test_display_api_token_is_separate_from_settings_secrets(tmp_path: Path):
 def test_public_birdweather_station_id_is_saved_without_a_secret(tmp_path: Path):
     app = create_app(tmp_path)
     with TestClient(app) as client:
+        authed(client)
         settings = client.get("/api/v1/settings").json()
         settings.update({"detection_source": "birdweather_public", "birdweather_public_station_id": 2505})
         saved = client.put("/api/v1/settings", json=settings)
@@ -53,6 +57,7 @@ def test_public_birdweather_station_id_is_saved_without_a_secret(tmp_path: Path)
 def test_recent_birds_are_deduplicated_and_include_an_image(tmp_path: Path):
     app = create_app(tmp_path)
     with TestClient(app) as client:
+        authed(client)
         for identifier, common_name, scientific_name in (("one", "Common Swift", "Apus apus"), ("two", "Common Swift", "Apus apus"), ("three", "Eurasian Magpie", "Pica pica")):
             assert client.post("/api/v1/detections", json={
                 "common_name": common_name, "scientific_name": scientific_name,
@@ -67,6 +72,7 @@ def test_recent_birds_are_deduplicated_and_include_an_image(tmp_path: Path):
 def test_settings_survive_application_restart(tmp_path: Path):
     app = create_app(tmp_path)
     with TestClient(app) as client:
+        authed(client)
         settings = client.get("/api/v1/settings").json()
         settings.update({
             "location_label": "Oslo, Norway",
@@ -81,6 +87,7 @@ def test_settings_survive_application_restart(tmp_path: Path):
 
     restarted = create_app(tmp_path)
     with TestClient(restarted) as client:
+        authed(client)
         saved = client.get("/api/v1/settings").json()
         assert saved["location_label"] == "Oslo, Norway"
         assert saved["birdweather_public_station_id"] == 2505
@@ -93,6 +100,7 @@ def test_settings_survive_application_restart(tmp_path: Path):
 def test_settings_activity_is_available_in_the_web_log(tmp_path: Path):
     app = create_app(tmp_path)
     with TestClient(app) as client:
+        authed(client)
         settings = client.get("/api/v1/settings").json()
         assert client.put("/api/v1/settings", json=settings).status_code == 200
         logs = client.get("/api/v1/logs").json()
@@ -102,6 +110,7 @@ def test_settings_activity_is_available_in_the_web_log(tmp_path: Path):
 def test_health_reports_needs_setup_until_settings_are_saved(tmp_path: Path):
     app = create_app(tmp_path)
     with TestClient(app) as client:
+        authed(client)
         assert client.get("/api/v1/health").json()["needs_setup"] is True
         settings = client.get("/api/v1/settings").json()
         assert client.put("/api/v1/settings", json=settings).status_code == 200
