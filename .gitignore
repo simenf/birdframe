@@ -28,6 +28,7 @@ samsung-token*
 
 # Generated artwork and diagnostics
 art/
+avianassets/
 packages/
 generated/
 previews/

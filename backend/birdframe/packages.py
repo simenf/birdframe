@@ -17,7 +17,7 @@ class PackageError(RuntimeError):
     pass
 
 
-MAX_ARCHIVE_BYTES = 500 * 1024 * 1024
+MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024
 MAX_EXPANDED_BYTES = 1024 * 1024 * 1024
 SAFE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 
