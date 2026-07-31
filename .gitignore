@@ -17,6 +17,7 @@ frontend/dist/
 .env
 .env.local
 data/
+data.old/
 !backend/birdframe/data/
 !backend/birdframe/data/*.json
 birdframe-data/
