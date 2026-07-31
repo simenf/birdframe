@@ -62,8 +62,32 @@ def _hex_rgb(value: str) -> tuple[int, int, int]:
 
 
 def _asset_path(art_dir: Path, species: SpeciesCount, pose: str) -> Path:
-    safe = "".join(character.lower() if character.isalnum() else "-" for character in (species.scientific_name or species.common_name)).strip("-")
-    return art_dir / "species" / safe / f"{pose}.png"
+    return art_dir / "species" / _species_slug(species) / f"{pose}.png"
+
+
+def _species_slug(species: SpeciesCount) -> str:
+    return "".join(character.lower() if character.isalnum() else "-" for character in (species.scientific_name or species.common_name)).strip("-")
+
+
+def _packaged_candidates(package: Path, safe: str, pose: str, asset_variant: str) -> list[Path]:
+    """Ordered candidate locations inside one installed pack, matching AvianVisitors layouts."""
+    candidates = [package / "assets" / "species" / safe / f"{pose}.png"]
+    # AvianVisitors bundles use scientific-name slugs directly:
+    # <slug>.png is perched, <slug>-2.png is the flight pose.
+    avian_slug = f"{safe}{'-2' if pose == 'flight' else ''}.png"
+    candidates.extend((
+        package / "illustrations" / avian_slug,
+        package / "assets" / "illustrations" / avian_slug,
+        package / "avian" / "assets" / "illustrations" / avian_slug,
+    ))
+    if asset_variant == "sketches":
+        sketch_candidates = (
+            package / "sketches" / avian_slug,
+            package / "assets" / "sketches" / avian_slug,
+            package / "avian" / "assets" / "sketches" / avian_slug,
+        )
+        candidates = list(sketch_candidates) + candidates
+    return candidates
 
 
 def _demo_bird(species: SpeciesCount, pose: str, palette_name: str) -> Image.Image:
@@ -106,34 +130,44 @@ def load_species_asset(
     if candidate.exists():
         with Image.open(candidate) as asset:
             return asset.convert("RGBA")
-    safe = "".join(character.lower() if character.isalnum() else "-" for character in (species.scientific_name or species.common_name)).strip("-")
+    safe = _species_slug(species)
     package_root = art_dir / "packages"
     if package_root.exists():
         packages = sorted(package_root.iterdir())
         if package_id != "all":
             packages = [package for package in packages if package.name == package_id]
         for package in packages:
-            candidates = [package / "assets" / "species" / safe / f"{pose}.png"]
-            # AvianVisitors bundles use scientific-name slugs directly:
-            # <slug>.png is perched, <slug>-2.png is the flight pose.
-            avian_slug = f"{safe}{'-2' if pose == 'flight' else ''}.png"
-            candidates.extend((
-                package / "illustrations" / avian_slug,
-                package / "assets" / "illustrations" / avian_slug,
-                package / "avian" / "assets" / "illustrations" / avian_slug,
-            ))
-            if asset_variant == "sketches":
-                sketch_candidates = (
-                    package / "sketches" / avian_slug,
-                    package / "assets" / "sketches" / avian_slug,
-                    package / "avian" / "assets" / "sketches" / avian_slug,
-                )
-                candidates = list(sketch_candidates) + candidates
-            for packaged in candidates:
+            for packaged in _packaged_candidates(package, safe, pose, asset_variant):
                 if packaged.exists():
                     with Image.open(packaged) as asset:
                         return asset.convert("RGBA")
     return _demo_bird(species, pose, palette)
+
+
+def species_has_asset(
+    art_dir: Path, species: SpeciesCount, package_id: str = "all",
+    asset_variant: str = "illustrations",
+) -> bool:
+    """True when a real generated or packaged asset exists for this species.
+
+    Mirrors load_species_asset() so a species is only considered "missing
+    artwork" when BirdFrame would fall back to the demo placeholder.
+    """
+    if any(_asset_path(art_dir, species, pose).exists() for pose in ("perched", "flight")):
+        return True
+    safe = _species_slug(species)
+    package_root = art_dir / "packages"
+    if not package_root.exists():
+        return False
+    packages = sorted(package_root.iterdir())
+    if package_id != "all":
+        packages = [package for package in packages if package.name == package_id]
+    return any(
+        candidate.exists()
+        for package in packages
+        for pose in ("perched", "flight")
+        for candidate in _packaged_candidates(package, safe, pose, asset_variant)
+    )
 
 
 def _resize_for_area(asset: Image.Image, area: float) -> Image.Image:

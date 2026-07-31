@@ -1,7 +1,7 @@
 export type Health = { status: string; version: string; composition_revision: number | null; needs_setup?: boolean; needs_admin?: boolean };
 export type Detection = { id: string; common_name: string; scientific_name?: string; confidence?: number; detected_at: string; source_type?: string };
 export type Display = { revision?: number; mode?: string; image_url?: string; created_at?: string; species?: Array<{ common_name: string; count?: number }> };
-export type RecentBird = { common_name: string; scientific_name?: string; count: number; confidence?: number; latest_at: string; image_url: string };
+export type RecentBird = { common_name: string; scientific_name?: string; count: number; confidence?: number; latest_at: string; image_url: string; has_artwork?: boolean };
 export type LogEntry = { id: number; level: string; message: string; created_at: string };
 export type LogPage = { items: LogEntry[]; total: number; limit: number; offset: number };
 export type User = { id: number; username: string; is_admin: boolean; created_at: string };
@@ -70,7 +70,7 @@ export const api = {
   refresh: () => request<Display>("/compositions/rebuild", { method: "POST" }),
   pushTv: () => request("/tv/push", { method: "POST" }),
   models: () => request<Array<{ id: string; name?: string; pricing?: unknown }>>("/openrouter/models"),
-  occurrences: () => request<Array<{ common_name: string; scientific_name: string; score: number }>>("/art/occurrences"),
+  occurrences: () => request<Array<{ common_name: string; scientific_name: string; score: number; has_artwork?: boolean }>>("/art/occurrences"),
   generateArt: (body: { species: Array<{ common_name: string; scientific_name: string }>; model?: string; poses?: "one" | "both" }) => request<{ id: number }>("/art/generate", { method: "POST", body: JSON.stringify(body) }),
   packs: () => request<Array<{ id: string; illustrations: number; sketches: number }>>("/art/packs"),
   packageCatalog: () => request<Array<{ id: string; version?: string; download_url: string; sha256: string }>>("/art/packages/catalog"),

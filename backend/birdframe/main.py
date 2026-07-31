@@ -25,7 +25,7 @@ from PIL import Image
 from .adapters import (AdapterError, BirdNETGoClient, BirdWeatherClient, OpenRouterClient,
                        ProviderUnavailable, PublicBirdWeatherClient, SamsungFrameClient, wake_on_lan)
 from .auth import api_key_prefix, generate_api_key, hash_api_key, hash_password
-from .compositor import SpeciesCount, collage_image, group_detections, latest_visitor_image, load_species_asset
+from .compositor import SpeciesCount, collage_image, group_detections, latest_visitor_image, load_species_asset, species_has_asset
 from .packages import MAX_ARCHIVE_BYTES, PackageError, SAFE_ID, fetch_catalog, install_archive, install_package, install_package_url
 from .schemas import (ApiKeyCreate, ApiKeyCreated, ApiKeyOut, AuthMe, BootstrapRequest, CompositionSummary,
                       Detection, DetectionCreate, JobRequest, LoginRequest, PackageInstallRequest,
@@ -550,6 +550,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
                 "count": item.count,
                 "confidence": item.confidence,
                 "latest_at": item.latest_at,
+                "has_artwork": species_has_asset(store.art_dir, item, settings.asset_pack_id, settings.asset_variant),
                 "image_url": f"{base}/api/v1/birds/image.png?" + urlencode({
                     "common_name": item.common_name,
                     "scientific_name": item.scientific_name,
@@ -691,7 +692,8 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         items = group_detections(store.recent_detections(24 * 365, limit=5000, min_confidence=settings.confidence_threshold))
         maximum = max((item.count for item in items), default=1)
         return [{"common_name": item.common_name, "scientific_name": item.scientific_name,
-                 "score": item.count / maximum, "score_label": "station_frequency", "detections": item.count}
+                 "score": item.count / maximum, "score_label": "station_frequency", "detections": item.count,
+                 "has_artwork": species_has_asset(store.art_dir, item, settings.asset_pack_id, settings.asset_variant)}
                 for item in items if item.count / maximum >= settings.occurrence_threshold][:settings.occurrence_max_species]
 
     @app.get("/api/v1/art/packages/catalog")

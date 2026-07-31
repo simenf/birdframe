@@ -66,7 +66,55 @@ def test_recent_birds_are_deduplicated_and_include_an_image(tmp_path: Path):
         birds = client.get("/api/v1/birds/recent").json()
         assert [(bird["common_name"], bird["count"]) for bird in birds] == [("Common Swift", 2), ("Eurasian Magpie", 1)]
         assert "/api/v1/birds/image.png?" in birds[0]["image_url"]
+        assert all(bird["has_artwork"] is False for bird in birds)
         assert client.get(birds[0]["image_url"]).headers["content-type"] == "image/png"
+
+
+def test_recent_birds_report_artwork_once_a_species_asset_exists(tmp_path: Path):
+    from PIL import Image
+
+    app = create_app(tmp_path)
+    with TestClient(app) as client:
+        authed(client)
+        assert client.post("/api/v1/detections", json={
+            "common_name": "Eurasian Magpie", "scientific_name": "Pica pica",
+            "source_type": "manual", "source_event_id": "magpie",
+        }).status_code == 201
+        birds = client.get("/api/v1/birds/recent").json()
+        assert birds[0]["has_artwork"] is False
+
+        target = tmp_path / "art" / "species" / "pica-pica"
+        target.mkdir(parents=True)
+        Image.new("RGBA", (64, 64), (0, 0, 0, 0)).save(target / "perched.png")
+
+        birds = client.get("/api/v1/birds/recent").json()
+        assert birds[0]["has_artwork"] is True
+
+
+def test_occurrences_report_which_species_are_missing_artwork(tmp_path: Path):
+    from PIL import Image
+
+    app = create_app(tmp_path)
+    with TestClient(app) as client:
+        authed(client)
+        for identifier, common_name, scientific_name in (("swift", "Common Swift", "Apus apus"), ("magpie", "Eurasian Magpie", "Pica pica")):
+            assert client.post("/api/v1/detections", json={
+                "common_name": common_name, "scientific_name": scientific_name,
+                "source_type": "manual", "source_event_id": identifier,
+            }).status_code == 201
+        occurrences = client.get("/api/v1/art/occurrences").json()
+        assert {item["common_name"]: item["has_artwork"] for item in occurrences} == {
+            "Common Swift": False, "Eurasian Magpie": False,
+        }
+
+        target = tmp_path / "art" / "species" / "pica-pica"
+        target.mkdir(parents=True)
+        Image.new("RGBA", (64, 64), (0, 0, 0, 0)).save(target / "perched.png")
+
+        occurrences = client.get("/api/v1/art/occurrences").json()
+        assert {item["common_name"]: item["has_artwork"] for item in occurrences} == {
+            "Common Swift": False, "Eurasian Magpie": True,
+        }
 
 
 def test_settings_survive_application_restart(tmp_path: Path):
