@@ -4,7 +4,7 @@ import json
 import os
 import sqlite3
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -113,6 +113,12 @@ class Store:
             has_display_api_token="display_api_token" in secrets,
         )
 
+    def needs_setup(self) -> bool:
+        """True on first run, before the setup wizard has saved any settings."""
+        with self.connection() as db:
+            row = db.execute("SELECT 1 FROM settings LIMIT 1").fetchone()
+        return row is None
+
     def save_settings(self, incoming: SettingsUpdate) -> SettingsResponse:
         data = incoming.model_dump()
         secret_names = {"openrouter_api_key", "birdweather_token", "ebird_api_key", "display_api_token"}
@@ -150,12 +156,12 @@ class Store:
         data["detected_at"] = occurred
         return Detection(**data, id=identifier, created_at=created)
 
-    def recent_detections(self, hours: int, limit: int = 500) -> list[Detection]:
+    def recent_detections(self, hours: int, limit: int = 500, min_confidence: float = 0.0) -> list[Detection]:
         cutoff = datetime.now(UTC).timestamp() - hours * 3600
         with self.connection() as db:
             rows = db.execute(
-                "SELECT * FROM detections WHERE unixepoch(detected_at)>=? ORDER BY detected_at DESC LIMIT ?",
-                (cutoff, limit),
+                "SELECT * FROM detections WHERE unixepoch(detected_at)>=? AND confidence>=? ORDER BY detected_at DESC LIMIT ?",
+                (cutoff, min_confidence, limit),
             ).fetchall()
         return [Detection(
             id=row["id"], source_type=row["source_type"], source_event_id=row["source_event_id"],
@@ -163,6 +169,23 @@ class Store:
             confidence=row["confidence"], detected_at=datetime.fromisoformat(row["detected_at"]),
             created_at=datetime.fromisoformat(row["created_at"]),
         ) for row in rows]
+
+    def has_recent_species_detection(self, species_key: str, since: datetime, min_confidence: float = 0.0) -> bool:
+        """True when a detection of the species exists at or after ``since``.
+
+        Used by the display policy's per-species duplicate cooldown. The key is
+        the scientific name when present, otherwise the common name, matching
+        :func:`birdframe.compositor.group_detections`.
+        """
+        with self.connection() as db:
+            row = db.execute(
+                """SELECT 1 FROM detections
+                   WHERE (scientific_name=? OR (scientific_name='' AND common_name=?))
+                     AND detected_at>=? AND confidence>=?
+                   LIMIT 1""",
+                (species_key, species_key, since.astimezone(UTC).isoformat(), min_confidence),
+            ).fetchone()
+        return row is not None
 
     def add_composition(self, *, mode: str, width: int, height: int, path: Path, sha256: str, species: list[dict[str, Any]]) -> int:
         with self.connection() as db:
@@ -227,3 +250,42 @@ class Store:
         with self.connection() as db:
             row = db.execute("SELECT composition_id,content_id,created_at FROM tv_uploads ORDER BY id DESC LIMIT 1").fetchone()
         return dict(row) if row else None
+
+    def cleanup(self, *, keep_days: int = 365, log_days: int = 30) -> dict[str, int]:
+        """Prune old state to bound disk and database growth.
+
+        Keeps at most one composition (the latest of each day) for the last
+        ``keep_days`` days and removes logs older than ``log_days`` days.
+        Files are unlinked before rows so a crash between the two is healed by
+        the next run, and the newest composition is always kept so the current
+        display artifact and its TV upload record survive cleanup.
+        """
+        now = datetime.now(UTC)
+        window_start = now - timedelta(days=keep_days)
+        removed: list[tuple[int, str]] = []
+        kept_days: set[str] = set()
+        with self.connection() as db:
+            for row in db.execute("SELECT id, path, created_at FROM compositions ORDER BY revision DESC").fetchall():
+                created = datetime.fromisoformat(row["created_at"])
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=UTC)
+                day = created.date().isoformat()
+                if created < window_start or day in kept_days:
+                    removed.append((row["id"], row["path"]))
+                else:
+                    kept_days.add(day)
+        removed_files = 0
+        for _identifier, path in removed:
+            try:
+                Path(path).unlink()
+                removed_files += 1
+            except FileNotFoundError:
+                pass
+        with self.connection() as db:
+            for identifier, _path in removed:
+                db.execute("DELETE FROM compositions WHERE id=?", (identifier,))
+                db.execute("DELETE FROM tv_uploads WHERE composition_id=?", (identifier,))
+            log_cutoff = (now - timedelta(days=log_days)).isoformat()
+            log_cursor = db.execute("DELETE FROM logs WHERE created_at < ?", (log_cutoff,))
+            removed_logs = log_cursor.rowcount
+        return {"compositions": len(removed), "files": removed_files, "logs": removed_logs}

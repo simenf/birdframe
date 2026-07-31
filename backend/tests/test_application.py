@@ -97,3 +97,12 @@ def test_settings_activity_is_available_in_the_web_log(tmp_path: Path):
         assert client.put("/api/v1/settings", json=settings).status_code == 200
         logs = client.get("/api/v1/logs").json()
         assert any("Settings saved" in entry["message"] for entry in logs)
+
+
+def test_health_reports_needs_setup_until_settings_are_saved(tmp_path: Path):
+    app = create_app(tmp_path)
+    with TestClient(app) as client:
+        assert client.get("/api/v1/health").json()["needs_setup"] is True
+        settings = client.get("/api/v1/settings").json()
+        assert client.put("/api/v1/settings", json=settings).status_code == 200
+        assert client.get("/api/v1/health").json()["needs_setup"] is False

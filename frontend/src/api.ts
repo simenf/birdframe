@@ -1,4 +1,4 @@
-export type Health = { status: string; version: string; composition_revision: number | null };
+export type Health = { status: string; version: string; composition_revision: number | null; needs_setup?: boolean };
 export type Detection = { id: string; common_name: string; scientific_name?: string; confidence?: number; detected_at: string; source_type?: string };
 export type Display = { revision?: number; mode?: string; image_url?: string; created_at?: string; species?: Array<{ common_name: string; count?: number }> };
 export type RecentBird = { common_name: string; scientific_name?: string; count: number; confidence?: number; latest_at: string; image_url: string };

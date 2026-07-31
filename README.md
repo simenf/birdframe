@@ -65,7 +65,9 @@ Docker Compose bind-mounts `${BIRDFRAME_DATA_DIR:-./data}` to `/data` in the
 container. Generated species PNGs, installed packages, rendered JPEGs, the
 SQLite database, encrypted secrets, and the in-app activity log therefore
 survive image rebuilds and container replacement. Back up the host `./data`
-directory before moving an installation.
+directory before moving an installation. Composition history is pruned to one
+JPEG per day for the past year, and the activity log is kept for 30 days, so
+long-running installations do not grow without bound.
 
 ## Generic display API
 

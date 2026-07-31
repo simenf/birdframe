@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import socket
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime
@@ -48,6 +49,25 @@ class GeneratedImage:
 @dataclass(frozen=True, slots=True)
 class SamsungUpload:
     content_id: str; selected: bool
+
+
+def wake_on_lan(mac: str, *, broadcast: str = "255.255.255.255", port: int = 9) -> None:
+    """Send a Wake-on-LAN magic packet for a TV MAC address.
+
+    Wake-on-LAN only ever wakes a sleeping device; it never turns a powered-on
+    TV off, so it is safe to send before an automatic artwork update.
+    """
+    cleaned = mac.strip().replace("-", "").replace(":", "").replace(".", "")
+    if len(cleaned) != 12:
+        raise ValueError("TV MAC address must be 12 hexadecimal digits")
+    try:
+        address = bytes.fromhex(cleaned)
+    except ValueError as exc:
+        raise ValueError("TV MAC address must be 12 hexadecimal digits") from exc
+    packet = b"\xff" * 6 + address * 16
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.sendto(packet, (broadcast, port))
 
 
 def _timestamp(value: Any) -> datetime:
@@ -281,12 +301,6 @@ class SamsungFrameClient:
         try: return await asyncio.to_thread(operation)
         except ProviderUnavailable: raise
         except Exception as exc: raise AdapterError(f"Samsung artwork upload failed: {exc}") from exc
-    async def wake(self) -> None:
-        def operation() -> None:
-            tv = self._tv(); tv.shortcuts().power()
-        try: await asyncio.to_thread(operation)
-        except ProviderUnavailable: raise
-        except Exception as exc: raise AdapterError(f"Samsung TV wake failed: {exc}") from exc
     async def delete_owned(self, content_id: str) -> None:
         """Delete only a content id BirdFrame previously recorded as its own."""
         if not content_id:

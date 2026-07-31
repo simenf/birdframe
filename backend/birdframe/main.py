@@ -9,10 +9,11 @@ import shutil
 import tempfile
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,7 +21,8 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
-from .adapters import AdapterError, BirdNETGoClient, BirdWeatherClient, OpenRouterClient, ProviderUnavailable, PublicBirdWeatherClient, SamsungFrameClient
+from .adapters import (AdapterError, BirdNETGoClient, BirdWeatherClient, OpenRouterClient,
+                       ProviderUnavailable, PublicBirdWeatherClient, SamsungFrameClient, wake_on_lan)
 from .compositor import SpeciesCount, collage_image, group_detections, latest_visitor_image, load_species_asset
 from .packages import MAX_ARCHIVE_BYTES, PackageError, SAFE_ID, fetch_catalog, install_archive, install_package, install_package_url
 from .schemas import (CompositionSummary, Detection, DetectionCreate, JobRequest, PackageInstallRequest,
@@ -38,6 +40,40 @@ def data_directory() -> Path:
 
 def frontend_directory() -> Path:
     return Path(os.environ.get("BIRDFRAME_FRONTEND_DIST", "/app/frontend-dist"))
+
+
+def _settings_timezone(settings: PublicSettings) -> ZoneInfo:
+    try:
+        return ZoneInfo(settings.timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo("UTC")
+
+
+def _minutes_of_day(value: str) -> int | None:
+    try:
+        hour, minute = value.strip().split(":", 1)
+        parsed = int(hour) * 60 + int(minute)
+    except (ValueError, TypeError):
+        return None
+    return parsed if 0 <= parsed < 24 * 60 else None
+
+
+def in_quiet_hours(settings: PublicSettings, now: datetime | None = None) -> bool:
+    """True when ``now`` falls inside the configured quiet hours window.
+
+    Quiet hours are interpreted in the configured location timezone, support
+    overnight ranges (start after end), and are disabled when either bound is
+    empty or malformed.
+    """
+    start = _minutes_of_day(settings.tv_quiet_hours_start)
+    end = _minutes_of_day(settings.tv_quiet_hours_end)
+    if start is None or end is None or start == end:
+        return False
+    local = (now or datetime.now(UTC)).astimezone(_settings_timezone(settings))
+    current = local.hour * 60 + local.minute
+    if start < end:
+        return start <= current < end
+    return current >= start or current < end
 
 
 def composition_summary(row: dict[str, Any]) -> CompositionSummary:
@@ -87,7 +123,7 @@ class BirdFrameService:
     async def render(self) -> dict[str, Any]:
         async with self.render_lock:
             settings = self.store.get_settings()
-            detections = self.store.recent_detections(settings.collage_hours)
+            detections = self.store.recent_detections(settings.collage_hours, min_confidence=settings.confidence_threshold)
             grouped = group_detections(detections)
             if settings.display_mode == "latest_visitor":
                 image, species = latest_visitor_image(grouped, settings, self.store.art_dir)
@@ -104,9 +140,27 @@ class BirdFrameService:
                 queue.put_nowait(row["revision"])
             return row
 
+    def qualifies_for_display(self, payload: DetectionCreate) -> bool:
+        """Display policy: confidence threshold and per-species duplicate cooldown.
+
+        The policy decides whether a stored detection becomes a display event
+        (a composition render). It does not remove the detection from history.
+        """
+        settings = self.store.get_settings()
+        if payload.confidence < settings.confidence_threshold:
+            return False
+        if settings.duplicate_cooldown_minutes > 0:
+            occurred = (payload.detected_at or datetime.now(UTC)).astimezone(UTC)
+            since = occurred - timedelta(minutes=settings.duplicate_cooldown_minutes)
+            key = payload.scientific_name.strip() or payload.common_name.strip()
+            if key and self.store.has_recent_species_detection(key, since, min_confidence=settings.confidence_threshold):
+                return False
+        return True
+
     async def ingest(self, payload: DetectionCreate, *, render: bool = True) -> Detection | None:
+        qualifying = self.qualifies_for_display(payload)
         result = self.store.add_detection(payload)
-        if result and render:
+        if result and render and qualifying:
             await self.render()
         return result
 
@@ -147,6 +201,13 @@ class BirdFrameService:
             elapsed = (datetime.now(UTC) - last_push.astimezone(UTC)).total_seconds()
             if elapsed < settings.tv_update_minutes * 60:
                 return
+        if in_quiet_hours(settings):
+            return
+        if settings.tv_wake_enabled and settings.tv_mac:
+            try:
+                wake_on_lan(settings.tv_mac)
+            except (OSError, ValueError) as exc:
+                self.log("warning", f"TV wake failed: {exc}")
         await self.push_to_tv(row)
 
     async def generate_assets(self, job_id: int, request: JobRequest) -> None:
@@ -217,16 +278,18 @@ async def source_worker(service: BirdFrameService, stop: asyncio.Event) -> None:
                     client = BirdWeatherClient(token)
                     result = await client.poll(cursor=cursor, limit=100)
                     cursor = result.cursor
-                    changed = False
+                    changed = qualifying = False
                     for item in result.detections:
-                        created = service.store.add_detection(DetectionCreate(
+                        payload = DetectionCreate(
                             common_name=item.common_name, scientific_name=item.scientific_name or "",
                             species_code=item.species_code or "", confidence=item.confidence or 0,
                             detected_at=item.occurred_at, source_type="birdweather", source_event_id=item.external_id,
-                        ))
+                        )
+                        qualifying = qualifying or service.qualifies_for_display(payload)
+                        created = await service.ingest(payload, render=False)
                         changed = changed or created is not None
                     await client.aclose()
-                    if changed:
+                    if changed and qualifying:
                         await service.render()
                         service.log("info", "Imported new detections from private BirdWeather station")
                 await pause(settings.birdweather_poll_seconds)
@@ -235,16 +298,18 @@ async def source_worker(service: BirdFrameService, stop: asyncio.Event) -> None:
                     client = PublicBirdWeatherClient(settings.birdweather_public_station_id)
                     seeding = cursor is None
                     result = await client.history() if seeding else await client.poll(limit=100)
-                    changed = False
+                    changed = qualifying = False
                     for item in result.detections:
-                        created = service.store.add_detection(DetectionCreate(
+                        payload = DetectionCreate(
                             common_name=item.common_name, scientific_name=item.scientific_name or "",
                             species_code=item.species_code or "", confidence=item.confidence or 0,
                             detected_at=item.occurred_at, source_type="birdweather_public", source_event_id=item.external_id,
-                        ))
+                        )
+                        qualifying = qualifying or service.qualifies_for_display(payload)
+                        created = await service.ingest(payload, render=False)
                         changed = changed or created is not None
                     await client.aclose()
-                    if changed:
+                    if changed and qualifying:
                         await service.render()
                         activity = "Seeded the previous 24 hours" if seeding else "Imported new detections"
                         service.log("info", f"{activity} from public BirdWeather station {settings.birdweather_public_station_id}")
@@ -284,6 +349,28 @@ async def tv_sync_worker(service: BirdFrameService, stop: asyncio.Event) -> None
             pass
 
 
+async def cleanup_worker(service: BirdFrameService, stop: asyncio.Event) -> None:
+    """Run retention cleanup at startup and then daily.
+
+    Keeps one composition per day for the last year and logs for 30 days, so a
+    long-running installation does not accumulate unbounded history files.
+    """
+    def run() -> None:
+        result = service.store.cleanup()
+        if any(result.values()):
+            service.log("info", f"Cleanup removed {result['compositions']} old composition records, "
+                                f"{result['files']} composition files, and {result['logs']} log entries")
+
+    run()
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=24 * 60 * 60)
+        except asyncio.TimeoutError:
+            pass
+        if not stop.is_set():
+            run()
+
+
 def create_app(data_dir: Path | None = None) -> FastAPI:
     store = Store(data_dir or data_directory())
     service = BirdFrameService(store)
@@ -295,13 +382,15 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             await service.render()
         worker = asyncio.create_task(source_worker(service, stop_sources))
         tv_worker = asyncio.create_task(tv_sync_worker(service, stop_sources))
+        cleanup = asyncio.create_task(cleanup_worker(service, stop_sources))
         try:
             yield
         finally:
             stop_sources.set()
             worker.cancel()
             tv_worker.cancel()
-            await asyncio.gather(worker, tv_worker, return_exceptions=True)
+            cleanup.cancel()
+            await asyncio.gather(worker, tv_worker, cleanup, return_exceptions=True)
 
     app = FastAPI(title="BirdFrame", version="0.1.0", lifespan=lifespan)
     app.state.store = store
@@ -320,7 +409,12 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @app.get("/api/v1/health")
     async def health() -> dict[str, object]:
         current = store.current_composition()
-        return {"status": "ok", "version": "0.1.0", "composition_revision": current["revision"] if current else None}
+        return {
+            "status": "ok",
+            "version": "0.1.0",
+            "composition_revision": current["revision"] if current else None,
+            "needs_setup": store.needs_setup(),
+        }
 
     @app.get("/api/v1/settings", response_model=SettingsResponse)
     async def get_settings() -> SettingsResponse:
@@ -341,6 +435,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     async def recent_birds(request: Request) -> list[dict[str, object]]:
         """One artwork-ready entry per species seen in the last 24 hours."""
         base = str(request.base_url).rstrip("/")
+        settings = store.get_settings()
         return [
             {
                 "common_name": item.common_name,
@@ -354,7 +449,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
                     "revision": item.latest_at,
                 }),
             }
-            for item in group_detections(store.recent_detections(24, limit=5000))
+            for item in group_detections(store.recent_detections(24, limit=5000, min_confidence=settings.confidence_threshold))
         ]
 
     @app.get("/api/v1/birds/image.png")
@@ -486,7 +581,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         settings = store.get_settings()
         # BirdWeather history is the zero-extra-dependency provider.  Scores are
         # intentionally labelled frequency rather than ecological probability.
-        items = group_detections(store.recent_detections(24 * 365, limit=5000))
+        items = group_detections(store.recent_detections(24 * 365, limit=5000, min_confidence=settings.confidence_threshold))
         maximum = max((item.count for item in items), default=1)
         return [{"common_name": item.common_name, "scientific_name": item.scientific_name,
                  "score": item.count / maximum, "score_label": "station_frequency", "detections": item.count}

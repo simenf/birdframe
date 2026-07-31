@@ -19,10 +19,14 @@ ever deletes a previous BirdFrame-owned upload after a replacement succeeds.
 
 ## Behavior controls
 
-Settings provide the matte, upload cadence, retries, quiet hours, and an
-explicit **allow wake** option. Wake-on-LAN is disabled until selected. A burst
-of detections is coalesced, so normal operation sends no more than one new
-composition per configured interval (five minutes by default).
+Settings provide the matte, upload cadence, quiet hours, and an explicit
+**allow wake** option. Automatic wake uses Wake-on-LAN and needs the TV's MAC
+address (Settings → Display & TV) with network standby enabled on the TV;
+wake is disabled until both are configured. Automatic TV updates are skipped
+during the configured quiet hours, interpreted in the location timezone
+selected in the setup wizard. A burst of detections is coalesced, so normal
+operation sends no more than one new composition per configured interval (five
+minutes by default).
 
 **Automatically select new artwork on TV** is enabled by default. BirdFrame
 checks for a newer rendered composition, uploads it at the configured cadence,
@@ -49,3 +53,17 @@ Check these first:
 Firmware may remove or alter Art Mode behavior. BirdFrame cannot guarantee
 support for every Frame model. The generic display API remains available for
 other displays even if direct TV control is unavailable.
+
+## Other Samsung TVs (Ambient Mode)
+
+Non-Frame Samsung TVs with Ambient Mode cannot receive pushed images through a
+local API. Samsung's supported path for adding photos to Ambient Mode ("My
+Album") is the SmartThings mobile app, which uploads through Samsung Cloud.
+The private `samsungtvws` Art Mode websocket that BirdFrame uses exists only on
+The Frame, and no public or community-documented local interface for Ambient
+Mode photo upload is available (the Samsung developer forum's Ambient Mode API
+requests have gone unanswered; Hubitat reports that Samsung has also disabled
+the Art Mode key on some 2022+ models). BirdFrame therefore targets Frame TVs
+directly. Other Samsung TVs — and any screen — can still show the exact same
+artwork through the generic display API (`/api/v1/display/current.jpg`) in a
+browser or media player, without the frame matte and selection controls.
