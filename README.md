@@ -1,18 +1,33 @@
 # BirdFrame
 
 BirdFrame is a self-hosted, non-commercial bird visitor display for Samsung The
-Frame TVs. It receives detections from either a local microphone via
+Frame TVs. It listens for birds through
 [BirdNET-Go](https://github.com/tphakala/birdnet-go) or an existing
-[BirdWeather](https://www.birdweather.com) station, builds an evolving 16:9
-kachō-e-inspired collage, and sends the exact same JPEG to the TV and a stable
-HTTP endpoint for other displays.
+[BirdWeather](https://www.birdweather.com) station, assembles an evolving 16:9
+field-guide collage from transparent bird illustrations, and pushes the exact
+same JPEG to your Frame — and to any other display — automatically.
 
-It is designed for an always-on 64-bit Linux computer. Collage mode is the
-default; “latest visitor” mode reuses the same approved bird artwork.
+The collage style is inspired by
+[AvianVisitors](https://github.com/Twarner491/AvianVisitors), a beautiful
+mask-aware, landscape packing project for Frame displays. BirdFrame reimplements
+that layout idea with its own compositor, typography, and artwork packs — a big
+thank you to the AvianVisitors project for the inspiration. BirdFrame does not
+include AvianVisitors code or artwork; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution details.
 
-> This is a hobby/non-commercial project. It does not include BirdNET model
-> files or any generated artwork. Review [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md),
-> the selected model terms, and every artwork package's attribution before use.
+## Screenshots
+
+![The BirdFrame overview shows the current collage and recent visitors.](docs/screenshots/overview.png)
+
+| Birds — one row per species, with artwork status and one-click generation | Settings — artwork, asset packs, and the display API |
+| --- | --- |
+| ![The Birds pane lists detected species and which ones still need artwork.](docs/screenshots/birds.png) | ![Settings covers OpenRouter artwork, asset packs, and the display API.](docs/screenshots/settings.png) |
+
+The [setup guide](docs/setup.md) walks through location, detection source, TV,
+artwork style, and display rhythm — and stays available after first run for
+quick adjustments.
+
+![The setup guide walks through location, detection source, TV, artwork, and display.](docs/screenshots/setup.png)
 
 ## Quick start
 
@@ -22,7 +37,7 @@ control. Docker Desktop is fine for trying BirdWeather mode, but is not a
 supported local-microphone or LAN-discovery host.
 
 ```sh
-git clone https://github.com/birdframe-project/birdframe.git
+git clone https://github.com/simenf/birdframe.git
 cd birdframe
 cp .env.example .env
 mkdir -p data birdnet-go-data
@@ -49,10 +64,28 @@ The container receives `/dev/snd`; select and test its microphone in the
 BirdNET-Go administration page linked from BirdFrame. See
 [docs/installation.md](docs/installation.md) before deploying permanently.
 
-This repository does not commit third-party artwork PNGs. A licensed source
-pack can be placed in `assets/packs/<pack-id>/` for a source build, or installed
-from a configured HTTPS catalog in the UI. In both cases, check its manifest,
-license, and attribution first; see [docs/artwork.md](docs/artwork.md).
+## Install the asset packs
+
+Once the service is running, the quickest way to get beautiful artwork is the
+official BirdFrame asset catalog — no source build or manual downloads needed:
+
+1. Open **Settings → Asset Packs**.
+2. Set the **Catalog URL** to:
+
+   ```text
+   https://avianassets.simenf.com/catalog.json
+   ```
+
+3. Click **Save catalog URL**, then **Load catalog packages**.
+4. Pick a regional pack and click **Install**. The catalog currently ships
+   Germany, Switzerland, and Western US packs, each with hundreds of full-color
+   illustrations plus pencil sketches.
+
+The catalog is hosted on Cloudflare R2 (zero egress fees) and is the maintained
+way to fetch assets after installation. You can also install from any other
+compatible HTTPS catalog, or bundle packs at build time under
+`assets/packs/<pack-id>/` — see [docs/artwork.md](docs/artwork.md). Always
+review a pack's manifest, license, and attribution before use.
 
 ## What is sent where
 
