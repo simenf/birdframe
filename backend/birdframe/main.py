@@ -25,7 +25,8 @@ from PIL import Image
 from .adapters import (AdapterError, BirdNETGoClient, BirdWeatherClient, OpenRouterClient,
                        ProviderUnavailable, PublicBirdWeatherClient, SamsungFrameClient, wake_on_lan)
 from .auth import api_key_prefix, generate_api_key, hash_api_key, hash_password
-from .compositor import SpeciesCount, collage_image, group_detections, latest_visitor_image, load_species_asset, species_has_asset
+from .compositor import (SpeciesCount, collage_image, group_detections, journal_image,
+                         latest_visitor_image, load_species_asset, species_has_asset)
 from .packages import MAX_ARCHIVE_BYTES, PackageError, SAFE_ID, fetch_catalog, install_archive, install_package, install_package_url
 from .schemas import (ApiKeyCreate, ApiKeyCreated, ApiKeyOut, AuthMe, BootstrapRequest, CompositionSummary,
                       Detection, DetectionCreate, JobRequest, LoginRequest, PackageInstallRequest,
@@ -131,6 +132,8 @@ class BirdFrameService:
             grouped = group_detections(detections)
             if settings.display_mode == "latest_visitor":
                 image, species = latest_visitor_image(grouped, settings, self.store.art_dir)
+            elif settings.display_mode == "journal":
+                image, species = journal_image(grouped, settings, self.store.art_dir)
             else:
                 image, species = collage_image(grouped, settings, self.store.art_dir)
             temporary = self.store.art_dir / f"composition-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%f')}.jpg"

@@ -11,9 +11,14 @@ The collage style is inspired by
 [AvianVisitors](https://github.com/Twarner491/AvianVisitors), a beautiful
 mask-aware, landscape packing project for Frame displays. BirdFrame reimplements
 that layout idea with its own compositor, typography, and artwork packs — a big
-thank you to the AvianVisitors project for the inspiration. BirdFrame does not
-include AvianVisitors code or artwork; see
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution details.
+thank you to the AvianVisitors project for the inspiration. The **Field
+Journal** display mode additionally re-implements the journal-page layout from
+[willmanidis2's frame-journal-layout fork](https://github.com/willmanidis2/AvianVisitors/tree/feat/frame-journal-layout)
+— a longhand date, a three-column grid of the day's species, and each count
+written in handwriting at the bird's lower right. BirdFrame does not include
+AvianVisitors code or artwork; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution details,
+including the bundled OFL fonts (Caveat and Libre Baskerville).
 
 ## Screenshots
 

@@ -117,6 +117,33 @@ def test_occurrences_report_which_species_are_missing_artwork(tmp_path: Path):
         }
 
 
+def test_journal_display_mode_renders_a_journal_page(tmp_path: Path):
+    app = create_app(tmp_path)
+    with TestClient(app) as client:
+        authed(client)
+        settings = client.get("/api/v1/settings").json()
+        settings.update({"display_mode": "journal"})
+        assert client.put("/api/v1/settings", json=settings).status_code == 200
+        for identifier, common_name, scientific_name in (
+            ("j1", "Common Swift", "Apus apus"),
+            ("j2", "Eurasian Magpie", "Pica pica"),
+            ("j3", "Great Tit", "Parus major"),
+            ("j4", "European Robin", "Erithacus rubecula"),
+        ):
+            assert client.post("/api/v1/detections", json={
+                "common_name": common_name, "scientific_name": scientific_name,
+                "source_type": "manual", "source_event_id": identifier,
+            }).status_code == 201
+        current = client.get("/api/v1/display/current.json").json()
+        assert current["mode"] == "journal"
+        assert [item["common_name"] for item in current["species"]] == [
+            "Common Swift", "Eurasian Magpie", "Great Tit", "European Robin",
+        ]
+        jpg = client.get("/api/v1/display/current.jpg")
+        assert jpg.status_code == 200
+        assert jpg.headers["content-type"] == "image/jpeg"
+
+
 def test_settings_survive_application_restart(tmp_path: Path):
     app = create_app(tmp_path)
     with TestClient(app) as client:

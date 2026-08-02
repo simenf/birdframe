@@ -27,4 +27,4 @@ build-backend = "setuptools.build_meta"
 include = ["birdframe*"]
 
 [tool.setuptools.package-data]
-birdframe = ["data/*.json"]
+birdframe = ["data/*.json", "data/fonts/*"]

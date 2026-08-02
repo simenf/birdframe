@@ -4,8 +4,10 @@ import hashlib
 import math
 import random
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
@@ -316,8 +318,141 @@ def _script_font(size: int) -> ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
+def _journal_font(size: int, *, italic: bool = False) -> ImageFont.ImageFont:
+    """Serif for the journal page (Libre Baskerville, bundled, OFL)."""
+    font_dir = Path(__file__).resolve().parent / "data" / "fonts"
+    name = "LibreBaskerville-Italic.ttf" if italic else "LibreBaskerville-Regular.ttf"
+    try:
+        return ImageFont.truetype(str(font_dir / name), size)
+    except OSError:
+        return _font(size, italic=italic)
+
+
+def _journal_script(size: int) -> ImageFont.ImageFont:
+    """Handwriting for the journal counts (Caveat, bundled, OFL)."""
+    font_dir = Path(__file__).resolve().parent / "data" / "fonts"
+    try:
+        return ImageFont.truetype(str(font_dir / "Caveat.ttf"), size)
+    except OSError:
+        return _script_font(size)
+
+
 def _localized_name(species: SpeciesCount, locale: str) -> str:
     return localized_species_name(species.scientific_name, species.common_name, locale)
+
+
+def _draw_tracked(draw: ImageDraw.ImageDraw, centre_x: float, y: float, text: str,
+                  font: ImageFont.ImageFont, fill: tuple[int, int, int], tracking: float) -> None:
+    """Centre text with uniform letter-spacing, like small-caps titles."""
+    widths = [draw.textlength(char, font=font) for char in text]
+    total = sum(widths) + tracking * max(0, len(text) - 1)
+    x = centre_x - total / 2
+    for char, char_width in zip(text, widths):
+        draw.text((x, y), char, font=font, fill=fill)
+        x += char_width + tracking
+
+
+def _draw_hand_count(canvas: Image.Image, x: float, y: float, text: str,
+                     font: ImageFont.ImageFont, ink: tuple[int, int, int]) -> None:
+    """A handwritten annotation (e.g. the day's count) tilted like a pencil note."""
+    layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    layer_draw = ImageDraw.Draw(layer)
+    layer_draw.text((x, y), text, font=font, fill=(*ink, 255), anchor="rs")
+    layer = layer.rotate(-4, resample=Image.Resampling.BICUBIC)
+    canvas.paste(layer, (0, 0), layer)
+
+
+def _ordinal(day: int) -> str:
+    return f"{day}{'th' if 10 <= day % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(day % 10, 'th')}"
+
+
+def _date_line(now: datetime) -> str:
+    return f"{now.strftime('%A')}, the {_ordinal(now.day)} of {now.strftime('%B')}"
+
+
+def _journal_timezone(settings: PublicSettings) -> ZoneInfo:
+    try:
+        return ZoneInfo(settings.timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo("UTC")
+
+
+def journal_image(species: list[SpeciesCount], settings: PublicSettings, art_dir: Path) -> tuple[Image.Image, list[dict[str, object]]]:
+    """A quiet 'field journal' page in the spirit of AvianVisitors' frame-journal layout.
+
+    Renders a longhand date header, a 3-column grid of the day's species (oldest
+    activity first), and each count written in a handwriting script at the
+    illustration's lower right. Inspired by willmanidis2's feat/frame-journal-layout
+    fork of AvianVisitors; this is BirdFrame's own Pillow implementation.
+    """
+    width, height = settings.output_width, settings.output_height
+    ink = (26, 26, 28)
+    paper = (255, 255, 255)
+    canvas = Image.new("RGB", (width, height), paper)
+    draw = ImageDraw.Draw(canvas)
+
+    margin = width * 0.075
+    top = height * 0.075
+    ordered = sorted(species, key=lambda item: item.latest_at)
+    shown = ordered[:9]  # 3 columns x 3 rows, like the original layout
+    rest = len(ordered) - len(shown)
+
+    # Longhand date header.
+    _draw_tracked(draw, width / 2, top, "Heard Today", _journal_font(int(height * 0.015)),
+                  ink, tracking=height * 0.004)
+    now = datetime.now(_journal_timezone(settings))
+    date_font = _journal_font(int(height * 0.038), italic=True)
+    date = _date_line(now)
+    date_box = draw.textbbox((0, 0), date, font=date_font)
+    draw.text(((width - (date_box[2] - date_box[0])) / 2, top + height * 0.042),
+              date, font=date_font, fill=ink)
+
+    if not shown:
+        empty_font = _journal_font(int(height * 0.026), italic=True)
+        draw.text((width / 2, height / 2), "nothing yet today", font=empty_font,
+                  fill=ink, anchor="mm")
+        return canvas, []
+
+    grid_top = top + height * 0.115
+    grid_bottom = height - height * 0.07
+    row_height = (grid_bottom - grid_top) / 3
+    col_width = (width - 2 * margin) / 3
+    placements: list[dict[str, object]] = []
+    for index, bird in enumerate(shown):
+        col = index % 3
+        row = index // 3
+        cell_x = margin + col * col_width
+        cell_y = grid_top + row * row_height
+        pose = "perched" if settings.pose_preference == "balanced" else settings.pose_preference
+        asset = load_species_asset(art_dir, bird, pose, settings.palette,
+                                   settings.asset_pack_id, settings.asset_variant)
+        box_w = col_width * 0.84
+        box_h = row_height * 0.56
+        ratio = min(box_w / asset.width, box_h / asset.height)
+        asset = asset.resize((int(asset.width * ratio), int(asset.height * ratio)),
+                             Image.Resampling.LANCZOS)
+        image_x = cell_x + (col_width - asset.width) / 2
+        image_y = cell_y + (row_height * 0.56 - asset.height) / 2
+        canvas.paste(asset, (int(image_x), int(image_y)), asset)
+        if bird.count > 1:
+            _draw_hand_count(canvas, image_x + asset.width - 4, image_y + asset.height - 2,
+                             str(bird.count), _journal_script(int(row_height * 0.26)), ink)
+        name = _localized_name(bird, settings.language).upper()
+        _draw_tracked(draw, cell_x + col_width / 2, cell_y + row_height * 0.58, name,
+                      _journal_font(int(height * 0.014)), ink, tracking=height * 0.0016)
+        placements.append({
+            "common_name": bird.common_name, "scientific_name": bird.scientific_name,
+            "count": bird.count, "confidence": bird.confidence, "latest_at": bird.latest_at,
+            "x": int(image_x), "y": int(image_y),
+            "width": asset.width, "height": asset.height,
+        })
+    if rest > 0:
+        more_font = _journal_font(int(height * 0.023), italic=True)
+        more = f"& {rest} more"
+        more_box = draw.textbbox((0, 0), more, font=more_font)
+        draw.text(((width - (more_box[2] - more_box[0])) / 2, grid_bottom + height * 0.012),
+                  more, font=more_font, fill=ink)
+    return canvas, placements
 
 
 def _draw_number(draw: ImageDraw.ImageDraw, x: int, y: int, number: int, paper: tuple[int, int, int], radius: int = 27) -> None:

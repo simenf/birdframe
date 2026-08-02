@@ -16,7 +16,7 @@ class PublicSettings(BaseModel):
     birdnet_go_url: str = "http://birdnet-go:8080"
     birdweather_public_station_id: int | None = Field(default=None, ge=1)
     birdweather_poll_seconds: int = Field(default=15, ge=10, le=3600)
-    display_mode: Literal["collage", "latest_visitor"] = "collage"
+    display_mode: Literal["collage", "latest_visitor", "journal"] = "collage"
     collage_hours: int = Field(default=24, ge=1, le=8760)
     confidence_threshold: float = Field(default=0.8, ge=0, le=1)
     duplicate_cooldown_minutes: int = Field(default=5, ge=0, le=1440)
