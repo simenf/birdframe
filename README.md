@@ -20,31 +20,34 @@ AvianVisitors code or artwork; see
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution details,
 including the bundled OFL fonts (Caveat and Libre Baskerville).
 
-## Four ways to see your backyard
+## Artwork styles
 
-| Living collage | Field plate |
-| --- | --- |
-| ![Living collage](frontend/public/layouts/collage.jpg) | ![Field plate](frontend/public/layouts/field-plate.jpg) |
-| Latest visitor | Field journal |
-| ![Latest visitor](frontend/public/layouts/latest.jpg) | ![Field journal](frontend/public/layouts/journal.jpg) |
+BirdFrame can draw your backyard in five ways — pick one in the setup guide's
+Artwork step.
 
-Pick a layout in Settings or the setup guide. The Field journal is the
-quietest of the four: a longhand date, a three-column grid of the day's
-species, and each bird's count written in handwriting at its lower right.
+| Living collage | Avian Visitors original | Field plate |
+| --- | --- | --- |
+| ![Living collage](docs/screenshots/styles/collage.jpg) | ![Avian Visitors original layout](docs/screenshots/styles/exact.jpg) | ![Horizontal field plate](docs/screenshots/styles/field-plate.jpg) |
+| Latest visitor | Field journal | |
+| ![Latest visitor](docs/screenshots/styles/latest.jpg) | ![Field journal](docs/screenshots/styles/journal.jpg) | |
 
-## Screenshots
+The Field journal is the quietest of the five: a longhand date, a three-column
+grid of the day's species, and each bird's count written in handwriting at its
+lower right.
+
+## The app
 
 ![The BirdFrame overview shows the current collage and recent visitors.](docs/screenshots/overview.png)
 
-| Birds — one row per species, with artwork status and one-click generation | Settings — artwork, asset packs, and the display API |
+| Birds — one row per species, with artwork status and one-click generation | Settings — artwork generation and the display API |
 | --- | --- |
-| ![The Birds pane lists detected species and which ones still need artwork.](docs/screenshots/birds.png) | ![Settings covers OpenRouter artwork, asset packs, and the display API.](docs/screenshots/settings.png) |
+| ![The Birds pane lists detected species and which ones still need artwork.](docs/screenshots/birds.png) | ![Settings covers artwork generation and the display API.](docs/screenshots/settings.png) |
 
 The [setup guide](docs/setup.md) walks through location, detection source, TV,
-artwork style, and display rhythm — and stays available after first run for
-quick adjustments.
+artwork style, asset packs, and display rhythm — and stays available after
+first run for quick adjustments.
 
-![The setup guide walks through location, detection source, TV, artwork, and display.](docs/screenshots/setup.png)
+![The setup guide's Artwork step shows a preview for every layout.](docs/screenshots/setup-artwork.png)
 
 ## Quick start
 
