@@ -31,10 +31,28 @@ quick adjustments.
 
 ## Quick start
 
-Requirements: 64-bit Linux (AMD64 or ARM64), Docker Engine with the Compose
-plugin, a browser on the same LAN, and a Samsung TV only if you want direct TV
-control. Docker Desktop is fine for trying BirdWeather mode, but is not a
-supported local-microphone or LAN-discovery host.
+Requirements: a 64-bit Linux machine (AMD64 or ARM64) with Docker Engine and a
+browser on the same LAN. A Samsung TV is only needed for direct TV control;
+Docker Desktop works for BirdWeather mode but is not a supported
+local-microphone or LAN-discovery host.
+
+Run the published multi-architecture image — no clone or build required:
+
+```sh
+mkdir -p data
+docker run -d --name birdframe --restart unless-stopped \
+  -p 8765:8765 \
+  -v "$PWD/data:/data" \
+  -e TZ=Europe/Oslo \
+  ghcr.io/simenf/birdframe:latest
+```
+
+Open `http://HOSTNAME-OR-IP:8765` and complete the setup wizard. The default
+starts only BirdFrame, for use with public BirdWeather data or prepared artwork.
+A private BirdWeather token is optional.
+
+Prefer to build from source (for development or customization)? Use Docker
+Compose:
 
 ```sh
 git clone https://github.com/simenf/birdframe.git
@@ -42,21 +60,6 @@ cd birdframe
 cp .env.example .env
 mkdir -p data birdnet-go-data
 docker compose up -d
-```
-
-Open `http://HOSTNAME-OR-IP:8765` and complete the setup wizard. The default
-starts only BirdFrame, for use with public BirdWeather data or prepared artwork.
-A private BirdWeather token is optional.
-
-Prefer not to build? Pull the published multi-architecture image instead:
-
-```sh
-docker pull ghcr.io/simenf/birdframe:latest
-docker run -d --name birdframe --restart unless-stopped \
-  -p 8765:8765 \
-  -v "$PWD/data:/data" \
-  -e TZ=Europe/Oslo \
-  ghcr.io/simenf/birdframe:latest
 ```
 
 The first visitor creates the administrator account; every later visitor signs
