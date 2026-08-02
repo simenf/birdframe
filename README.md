@@ -7,7 +7,7 @@ Frame TVs. It listens for birds through
 
 It is based on the ideas of [Avianvisitors](https://github.com/Twarner491/AvianVisitors). The field journal view is based on [willmanidis2's frame-journal-layout fork](https://github.com/willmanidis2/AvianVisitors/tree/feat/frame-journal-layout)
 
-![image](docs/screenshots/styles/exact.jpg) 
+![image](docs/screenshots/livingroom.jpg) 
 
 BirdFrame can draw your backyard in five ways.
 
@@ -18,7 +18,7 @@ BirdFrame can draw your backyard in five ways.
 | ![Latest visitor](docs/screenshots/styles/latest.jpg) | ![Field journal](docs/screenshots/styles/journal.jpg) | |
 
 
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution details.
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
 ## The app
 
@@ -147,10 +147,9 @@ Do not lose `data/secret.key`: encrypted tokens cannot be recovered without it.
 - [Development](docs/development.md)
 
 ## Publishing and licensing
-
-The repository is ready to build from a clean checkout, but a release
-maintainer still needs to choose a GitHub owner, publish a container image, and
-review each optional artwork/model license. Source code and original
+Source code and original
 documentation are CC BY-NC-SA 4.0; see [LICENSE](LICENSE) and
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Local runtime state is ignored
-by Git and must never be committed.
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## Notes on AI
+This is almost entirely created using CODEX with GPT 5.6 Luna, and Codex with Deepseek V4 flash 0731.
