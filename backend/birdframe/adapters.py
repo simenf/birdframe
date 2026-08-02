@@ -297,7 +297,18 @@ class SamsungFrameClient:
     async def upload_and_select(self, image: bytes, *, file_type: str = "JPG", matte: str = "none", show: bool = True) -> SamsungUpload:
         if not image: raise ValueError("cannot upload an empty image")
         def operation() -> SamsungUpload:
-            tv = self._tv(); art = tv.art(); content_id = art.upload(image, file_type=file_type, matte=matte); art.select_image(content_id, show=show); return SamsungUpload(str(content_id), True)
+            tv = self._tv(); art = tv.art(); content_id = art.upload(image, file_type=file_type, matte=matte)
+            show_now = False
+            if show:
+                # Only force Art Mode if the TV is already showing it. When the
+                # family is watching TV, upload + select quietly so the new
+                # composition is ready but the screen is not interrupted.
+                try:
+                    show_now = str(art.get_artmode()).lower() in ("on", "true", "1")
+                except Exception:
+                    show_now = False
+            art.select_image(content_id, show=show_now)
+            return SamsungUpload(str(content_id), show_now)
         try: return await asyncio.to_thread(operation)
         except ProviderUnavailable: raise
         except Exception as exc: raise AdapterError(f"Samsung artwork upload failed: {exc}") from exc

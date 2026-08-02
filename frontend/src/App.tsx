@@ -43,7 +43,19 @@ export function App() {
 }
 
 function Sidebar({ page, setPage, configured, user, onLogout }: { page: Page; setPage: (p: Page) => void; configured: boolean; user: string; onLogout: () => void }) { return <aside className="sidebar"><div className="brand"><span className="brand-mark">✦</span><span>birdframe</span></div><nav><button className={page === "dashboard" ? "active" : ""} onClick={() => setPage("dashboard")}><i>▦</i>Overview</button><button className={page === "birds" ? "active" : ""} onClick={() => setPage("birds")}><i>♧</i>Birds</button><button className={page === "logs" ? "active" : ""} onClick={() => setPage("logs")}><i>≡</i>Activity log</button><button className={page === "setup" ? "active" : ""} onClick={() => setPage("setup")}><i>◌</i>{configured ? "Setup" : "Finish setup"}</button><button className={page === "settings" ? "active" : ""} onClick={() => setPage("settings")}><i>⚙</i>Generate artwork</button><button className={page === "account" ? "active" : ""} onClick={() => setPage("account")}><i>🔑</i>Account</button></nav><div className="sidebar-bottom"><span className={configured ? "status-dot good" : "status-dot"}></span><span>{configured ? "Monitoring" : "Not configured"}</span><div className="sidebar-user"><span>👤 {user}</span><button type="button" className="text-button" onClick={onLogout}>Log out</button></div></div></aside> }
-function Topbar({ page, setPage }: { page: Page; setPage: (p: Page) => void }) { const title = page === "dashboard" ? "Good afternoon" : page === "setup" ? "Set up your frame" : page === "logs" ? "Activity log" : page === "birds" ? "Detected birds" : page === "account" ? "Account & API keys" : "Generate artwork"; return <header className="topbar"><div><p className="eyebrow">{page === "dashboard" ? "YOUR BACKYARD" : "BIRDFRAME"}</p><h1>{title}</h1></div>{page === "dashboard" && <button className="button soft" onClick={() => setPage("settings")}>⚙ Generate artwork</button>}</header> }
+function Topbar({ page, setPage }: { page: Page; setPage: (p: Page) => void }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const title = page === "dashboard" ? "Good afternoon" : page === "setup" ? "Set up your frame" : page === "logs" ? "Activity log" : page === "birds" ? "Detected birds" : page === "account" ? "Account & API keys" : "Generate artwork";
+  const items: Array<{ id: Page; icon: string; label: string }> = [
+    { id: "dashboard", icon: "▦", label: "Overview" },
+    { id: "birds", icon: "♧", label: "Birds" },
+    { id: "logs", icon: "≡", label: "Activity log" },
+    { id: "setup", icon: "◌", label: "Setup" },
+    { id: "settings", icon: "⚙", label: "Generate artwork" },
+    { id: "account", icon: "🔑", label: "Account" },
+  ];
+  return <header className="topbar"><div><p className="eyebrow">{page === "dashboard" ? "YOUR BACKYARD" : "BIRDFRAME"}</p><h1>{title}</h1></div>{page === "dashboard" && <button className="button soft" onClick={() => setPage("settings")}>⚙ Generate artwork</button>}<button className="menu-toggle" aria-label="Menu" onClick={() => setMenuOpen(!menuOpen)}>☰</button>{menuOpen && <nav className="mobile-nav">{items.map((item) => <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => { setPage(item.id); setMenuOpen(false); }}>{item.icon} {item.label}</button>)}</nav>}</header>;
+}
 
 function Dashboard({ health, display, birds, error, refresh, setPage }: ReturnType<typeof useRemoteData> & { setPage: (p: Page) => void }) {
   const [busy, setBusy] = useState(false); const [tvJob, setTvJob] = useState<number | null>(null); const [tvNotice, setTvNotice] = useState(""); const species = display.species || [];

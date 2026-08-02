@@ -1,11 +1,11 @@
 # BirdFrame
 
-BirdFrame is a self-hosted, non-commercial bird visitor display for Samsung The
+BirdFrame is a self-hosted, bird visitor display for Samsung The
 Frame TVs. It listens for birds through
 [BirdNET-Go](https://github.com/tphakala/birdnet-go) or an existing
 [BirdWeather](https://www.birdweather.com) station, and creates beatiful artwork for your samsung frame tv based on the birds in your back yard.
 
-It is based on the ideas of [Avianvisitors](https://github.com/Twarner491/AvianVisitors). The field journal view is based on [willmanidis2's frame-journal-layout fork](https://github.com/willmanidis2/AvianVisitors/tree/feat/frame-journal-layout)
+It is based on the ideas of [Avianvisitors](https://github.com/Twarner491/AvianVisitors) which is the same concept, but for e-ink displays. The frame journal view is based on [willmanidis2's frame-journal-layout fork](https://github.com/willmanidis2/AvianVisitors/tree/feat/frame-journal-layout)
 
 ![image](docs/screenshots/livingroom.jpg) 
 
@@ -152,4 +152,4 @@ documentation are CC BY-NC-SA 4.0; see [LICENSE](LICENSE) and
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Notes on AI
-This is almost entirely created using CODEX with GPT 5.6 Luna, and Codex with Deepseek V4 flash 0731.
+This is almost entirely created using CODEX with GPT 5.6 Luna, and Codex with Deepseek V4 flash 0731. In total around 1 quota of chagpt plus and around 120 million deepseek tokens. Also, I know nothing about birds, computers, the internet or security. I have asked AI if this is secure and it thinks it is. 

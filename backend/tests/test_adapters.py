@@ -110,3 +110,31 @@ async def test_samsung_upload_uses_art_mode_interface_without_library_import():
     result = await SamsungFrameClient("10.0.0.3", tv_factory=lambda **kwargs: TV()).upload_and_select(b"jpeg", show=False)
     assert result.content_id == "MY_F0001"
     assert events == [(b"jpeg", "JPG", "none"), ("MY_F0001", False)]
+
+
+@pytest.mark.asyncio
+async def test_samsung_upload_only_switches_to_art_mode_when_already_active():
+    class Art:
+        def __init__(self, mode): self.mode = mode
+        def upload(self, image, *, file_type, matte): return "MY_F0001"
+        def get_artmode(self): return self.mode
+        def select_image(self, content_id, *, show): self.shown = show
+    class TV:
+        def __init__(self, mode): self.artmode = mode
+        def art(self): return Art(self.artmode)
+
+    on = SamsungFrameClient("10.0.0.3", tv_factory=lambda **kwargs: TV("on"))
+    result = await on.upload_and_select(b"jpeg")
+    assert result.selected is True
+
+    off = SamsungFrameClient("10.0.0.3", tv_factory=lambda **kwargs: TV("off"))
+    result = await off.upload_and_select(b"jpeg")
+    assert result.selected is False
+
+    class BrokenArt(Art):
+        def get_artmode(self): raise RuntimeError("tv busy")
+    class BrokenTV:
+        def art(self): return BrokenArt("on")
+    broken = SamsungFrameClient("10.0.0.3", tv_factory=lambda **kwargs: BrokenTV())
+    result = await broken.upload_and_select(b"jpeg")
+    assert result.selected is False
