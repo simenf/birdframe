@@ -48,6 +48,17 @@ Open `http://HOSTNAME-OR-IP:8765` and complete the setup wizard. The default
 starts only BirdFrame, for use with public BirdWeather data or prepared artwork.
 A private BirdWeather token is optional.
 
+Prefer not to build? Pull the published multi-architecture image instead:
+
+```sh
+docker pull ghcr.io/simenf/birdframe:latest
+docker run -d --name birdframe --restart unless-stopped \
+  -p 8765:8765 \
+  -v "$PWD/data:/data" \
+  -e TZ=Europe/Oslo \
+  ghcr.io/simenf/birdframe:latest
+```
+
 The first visitor creates the administrator account; every later visitor signs
 in with a username and password. The web UI uses an API key tied to your
 account, and every management API call requires one. Generate and revoke keys

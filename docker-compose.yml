@@ -9,7 +9,7 @@
 # not supported for hardware discovery on Docker Desktop.
 services:
   birdframe:
-    image: ghcr.io/birdframe-project/birdframe:${BIRDFRAME_VERSION:-0.1.0}
+    image: ghcr.io/simenf/birdframe:${BIRDFRAME_VERSION:-0.1.0}
     # Building locally makes the repository installable before a registry
     # release exists; Compose still tags the result with the image above.
     build: .
