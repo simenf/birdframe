@@ -20,6 +20,18 @@ AvianVisitors code or artwork; see
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution details,
 including the bundled OFL fonts (Caveat and Libre Baskerville).
 
+## Four ways to see your backyard
+
+| Living collage | Field plate |
+| --- | --- |
+| ![Living collage](frontend/public/layouts/collage.jpg) | ![Field plate](frontend/public/layouts/field-plate.jpg) |
+| Latest visitor | Field journal |
+| ![Latest visitor](frontend/public/layouts/latest.jpg) | ![Field journal](frontend/public/layouts/journal.jpg) |
+
+Pick a layout in Settings or the setup guide. The Field journal is the
+quietest of the four: a longhand date, a three-column grid of the day's
+species, and each bird's count written in handwriting at its lower right.
+
 ## Screenshots
 
 ![The BirdFrame overview shows the current collage and recent visitors.](docs/screenshots/overview.png)
