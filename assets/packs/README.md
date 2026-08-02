@@ -1,7 +1,8 @@
 # Source illustration packs
 
-Place compact, usable BirdFrame packs here. The Docker build seeds them into
-`/data/art/packages` on first start without overwriting a mapped data volume.
+Place compact, usable BirdFrame packs here. They are no longer baked into the
+Docker image; use them as the source for the shareable avianassets catalog, or
+install packs from a catalog URL at runtime (Settings → Asset Packs).
 
 Use `scripts/import-illustration-packs.sh /path/to/downloaded/packs` to turn
 the downloaded AvianVisitors repositories into clean packs containing only

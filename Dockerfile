@@ -24,12 +24,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/ ./backend/
-COPY assets/packs/ ./seed-packs/
 COPY --from=frontend-build /src/frontend/dist ./frontend-dist/
 RUN pip install --no-cache-dir ./backend \
     && useradd --system --uid 10001 --create-home birdframe \
-    && mkdir -p /data /opt/birdframe-seed/packages \
-    && cp -a ./seed-packs/. /opt/birdframe-seed/packages/ \
+    && mkdir -p /data \
     && chown -R birdframe:birdframe /data
 COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/birdframe-entrypoint
 

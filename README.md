@@ -93,10 +93,11 @@ official BirdFrame asset catalog — no source build or manual downloads needed:
    illustrations plus pencil sketches.
 
 The catalog is hosted on Cloudflare R2 (zero egress fees) and is the maintained
-way to fetch assets after installation. You can also install from any other
-compatible HTTPS catalog, or bundle packs at build time under
-`assets/packs/<pack-id>/` — see [docs/artwork.md](docs/artwork.md). Always
-review a pack's manifest, license, and attribution before use.
+way to fetch assets after installation. The image intentionally ships without
+artwork to stay small. You can also install from any other compatible HTTPS
+catalog, or drop ZIPs into the persistent `data/art/packages` directory — see
+[docs/artwork.md](docs/artwork.md). Always review a pack's manifest, license,
+and attribution before use.
 
 ## What is sent where
 

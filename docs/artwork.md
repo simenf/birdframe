@@ -45,10 +45,12 @@ jobs and appear in Activity log. Catalog entries can be loaded and installed
 from the same page. Direct URLs do not provide a catalog checksum, so prefer a
 catalog entry with a published SHA-256 when distributing packs publicly.
 
-The source repository does not commit third-party PNG artwork. When building
-from source, `scripts/import-illustration-packs.sh` can copy a licensed upstream
-pack into `assets/packs/`; those files remain ignored by Git and are seeded into
-the persistent art directory on first container start.
+The source repository does not commit third-party PNG artwork, and the Docker
+image ships without packs to stay small. Install packs at runtime from the
+official catalog (Settings → Asset Packs) or drop ZIPs directly into the
+persistent `data/art/packages` directory. When preparing packs from source,
+`scripts/import-illustration-packs.sh` can copy a licensed upstream pack into
+`assets/packs/`; those files remain ignored by Git.
 
 To create a shareable ZIP from one of those downloaded packs, run
 `python scripts/create-asset-pack.py assets/packs/<pack-id> output.zip`. The

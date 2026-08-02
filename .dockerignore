@@ -8,6 +8,7 @@ backend/.pytest_cache
 **/__pycache__
 **/*.pyc
 data
+assets/packs
 birdnet-go-data
 *.db
 *.sqlite*
