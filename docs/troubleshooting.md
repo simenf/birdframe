@@ -15,8 +15,7 @@ secrets, when available.
 | Symptom | Checks |
 | --- | --- |
 | UI does not load | Confirm `BIRDFRAME_PORT` is free, the container is healthy, and the Linux firewall permits trusted-LAN access. |
-| BirdWeather test fails | Verify the station token at BirdWeather, then inspect status/backoff logs without revealing it. |
-| No microphone detections | Ensure the `local-audio` profile is running, `/dev/snd` exists, and BirdNET-Go has the correct capture device. See [microphone.md](microphone.md). |
+| BirdWeather test fails | Verify the station token at BirdWeather, then inspect status/backoff logs without revealing it. 
 | BirdFrame cannot reach BirdNET-Go | This Compose configuration uses host networking: set `BIRDNET_GO_URL=http://127.0.0.1:8080`, then inspect upstream logs. |
 | TV discovery or wake fails | Use manual IP, same subnet, disable client isolation, and test each Art Mode operation separately. See [samsung-frame.md](samsung-frame.md). |
 | Package install fails | Check catalog URL, download reachability, checksum, package compatibility, and free space. Never bypass checksum errors. |
@@ -26,9 +25,8 @@ secrets, when available.
 
 ```sh
 docker compose restart birdframe
-docker compose --profile local-audio restart birdnet-go
-```
 
+```
 Jobs and cursor state are persisted and should resume safely. A restart does not
 delete artwork or TV pairing state.
 

@@ -3,27 +3,13 @@
 BirdFrame is a self-hosted, non-commercial bird visitor display for Samsung The
 Frame TVs. It listens for birds through
 [BirdNET-Go](https://github.com/tphakala/birdnet-go) or an existing
-[BirdWeather](https://www.birdweather.com) station, assembles an evolving 16:9
-field-guide collage from transparent bird illustrations, and pushes the exact
-same JPEG to your Frame — and to any other display — automatically.
+[BirdWeather](https://www.birdweather.com) station, and creates beatiful artwork for your samsung frame tv based on the birds in your back yard.
 
-The collage style is inspired by
-[AvianVisitors](https://github.com/Twarner491/AvianVisitors), a beautiful
-mask-aware, landscape packing project for Frame displays. BirdFrame reimplements
-that layout idea with its own compositor, typography, and artwork packs — a big
-thank you to the AvianVisitors project for the inspiration. The **Field
-Journal** display mode additionally re-implements the journal-page layout from
-[willmanidis2's frame-journal-layout fork](https://github.com/willmanidis2/AvianVisitors/tree/feat/frame-journal-layout)
-— a longhand date, a three-column grid of the day's species, and each count
-written in handwriting at the bird's lower right. BirdFrame does not include
-AvianVisitors code or artwork; see
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution details,
-including the bundled OFL fonts (Caveat and Libre Baskerville).
+It is based on the ideas of [Avianvisitors](https://github.com/Twarner491/AvianVisitors). The field journal view is based on [willmanidis2's frame-journal-layout fork](https://github.com/willmanidis2/AvianVisitors/tree/feat/frame-journal-layout)
 
-## Artwork styles
+![image](docs/screenshots/styles/exact.jpg) 
 
-BirdFrame can draw your backyard in five ways — pick one in the setup guide's
-Artwork step.
+BirdFrame can draw your backyard in five ways.
 
 | Living collage | Avian Visitors original | Field plate |
 | --- | --- | --- |
@@ -31,9 +17,8 @@ Artwork step.
 | Latest visitor | Field journal | |
 | ![Latest visitor](docs/screenshots/styles/latest.jpg) | ![Field journal](docs/screenshots/styles/journal.jpg) | |
 
-The Field journal is the quietest of the five: a longhand date, a three-column
-grid of the day's species, and each bird's count written in handwriting at its
-lower right.
+
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution details.
 
 ## The app
 
@@ -44,8 +29,7 @@ lower right.
 | ![The Birds pane lists detected species and which ones still need artwork.](docs/screenshots/birds.png) | ![Settings covers artwork generation and the display API.](docs/screenshots/settings.png) |
 
 The [setup guide](docs/setup.md) walks through location, detection source, TV,
-artwork style, asset packs, and display rhythm — and stays available after
-first run for quick adjustments.
+artwork style, asset packs, and display updates.
 
 ![The setup guide's Artwork step shows a preview for every layout.](docs/screenshots/setup-artwork.png)
 
@@ -67,9 +51,8 @@ docker run -d --name birdframe --restart unless-stopped \
   ghcr.io/simenf/birdframe:latest
 ```
 
-Open `http://HOSTNAME-OR-IP:8765` and complete the setup wizard. The default
-starts only BirdFrame, for use with public BirdWeather data or prepared artwork.
-A private BirdWeather token is optional.
+Open `http://HOSTNAME-OR-IP:8765` create a user and complete the setup wizard. The default
+starts only BirdFrame.
 
 Prefer to build from source (for development or customization)? Use Docker
 Compose:
@@ -83,24 +66,12 @@ docker compose up -d
 ```
 
 The first visitor creates the administrator account; every later visitor signs
-in with a username and password. The web UI uses an API key tied to your
-account, and every management API call requires one. Generate and revoke keys
-under Settings → API keys and users, and add additional users from the same
-panel (admin only).
+in with a username and password. 
 
-For a USB/local microphone on Linux, start the optional upstream sidecar:
-
-```sh
-docker compose --profile local-audio up -d
-```
-
-The container receives `/dev/snd`; select and test its microphone in the
-BirdNET-Go administration page linked from BirdFrame. See
-[docs/installation.md](docs/installation.md) before deploying permanently.
 
 ## Install the asset packs
 
-Once the service is running, the quickest way to get beautiful artwork is the
+Once the service is running, the quickest way to get beautiful artwork is to add an openrouter api key and generate images, or through the
 official BirdFrame asset catalog — no source build or manual downloads needed:
 
 1. Open **Settings → Asset Packs**.
@@ -115,23 +86,10 @@ official BirdFrame asset catalog — no source build or manual downloads needed:
    Germany, Switzerland, and Western US packs, each with hundreds of full-color
    illustrations plus pencil sketches.
 
-The catalog is hosted on Cloudflare R2 (zero egress fees) and is the maintained
-way to fetch assets after installation. The image intentionally ships without
-artwork to stay small. You can also install from any other compatible HTTPS
+You can also install from any other compatible HTTPS
 catalog, or drop ZIPs into the persistent `data/art/packages` directory — see
-[docs/artwork.md](docs/artwork.md). Always review a pack's manifest, license,
-and attribution before use.
+[docs/artwork.md](docs/artwork.md).
 
-## What is sent where
-
-- Audio stays in BirdNET-Go on your host. BirdFrame does not send microphone
-  audio to OpenRouter.
-- Public BirdWeather mode reads public detections using a station ID (for
-  example `2505`) and needs no credential. Private-station mode asks
-  BirdWeather only for the detections authorized by your token.
-- Artwork generation sends text prompts and only the references you explicitly
-  select to your chosen OpenRouter model/provider.
-- Samsung control and image upload occur over your local network.
 
 ## Persistent artwork and logs
 
@@ -145,8 +103,6 @@ long-running installations do not grow without bound.
 
 ## Generic display API
 
-The composition does not depend on the Samsung integration. Other devices can
-display the exact JPEG selected for TV upload:
 
 ```text
 GET /api/v1/display/current.jpg
