@@ -286,14 +286,14 @@ class OpenRouterClient:
 
 class SamsungFrameClient:
     """Async facade over optional synchronous ``samsungtvws`` Art Mode support."""
-    def __init__(self, host: str, *, token: str | None = None, port: int = 8002, tv_factory: Callable[..., Any] | None = None) -> None:
-        self.host, self.token, self.port, self._factory = host, token, port, tv_factory
+    def __init__(self, host: str, *, token: str | None = None, port: int = 8002, tv_factory: Callable[..., Any] | None = None, timeout: float | None = 60) -> None:
+        self.host, self.token, self.port, self._factory, self.timeout = host, token, port, tv_factory, timeout
     def _tv(self) -> Any:
         if self._factory: return self._factory(host=self.host, token=self.token, port=self.port)
         try:
             from samsungtvws import SamsungTVWS
         except ImportError as exc: raise ProviderUnavailable("Samsung support requires the samsungtvws extra") from exc
-        return SamsungTVWS(host=self.host, token=self.token, port=self.port)
+        return SamsungTVWS(host=self.host, token=self.token, port=self.port, timeout=self.timeout)
     async def upload_and_select(self, image: bytes, *, file_type: str = "JPG", matte: str = "none", show: bool = True) -> SamsungUpload:
         if not image: raise ValueError("cannot upload an empty image")
         def operation() -> SamsungUpload:

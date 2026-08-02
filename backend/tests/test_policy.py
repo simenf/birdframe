@@ -1,4 +1,5 @@
 import socket
+import time
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
@@ -124,7 +125,7 @@ class FakeSamsung:
     """Test double for SamsungFrameClient; records uploads."""
     pushes: list[tuple[str, str, int]] = []
 
-    def __init__(self, host: str, *, token: str | None = None, port: int = 8002, tv_factory=None):
+    def __init__(self, host: str, *, token: str | None = None, port: int = 8002, tv_factory=None, timeout: float | None = 60):
         self.host = host
 
     async def upload_and_select(self, image, *, file_type="JPG", matte="none", show=True):
@@ -168,6 +169,33 @@ async def test_automatic_tv_sync_respects_quiet_hours_and_wakes(tmp_path, monkey
         await service.sync_tv_if_due()
         assert len(FakeSamsung.pushes) == 1  # already uploaded the current revision
 
+
+def test_tv_push_is_queued_as_a_background_job(tmp_path, monkeypatch):
+    app = create_app(tmp_path)
+    with TestClient(app) as client:
+        authed(client)
+        _settings(client, tv_host="10.0.0.3")
+        assert client.post("/api/v1/detections", json={
+            "common_name": "Common Swift", "scientific_name": "Apus apus",
+            "confidence": 1.0, "source_event_id": "push-one",
+        }).status_code == 201
+        monkeypatch.setattr(birdframe_main, "SamsungFrameClient", FakeSamsung)
+        FakeSamsung.pushes = []
+        response = client.post("/api/v1/tv/push")
+        assert response.status_code == 202
+        job_id = response.json()["id"]
+        job = None
+        for _ in range(30):
+            job = next((item for item in client.get("/api/v1/jobs").json() if item["id"] == job_id), None)
+            if job and job["status"] != "running":
+                break
+            time.sleep(0.1)
+        assert job is not None
+        assert job["kind"] == "tv_push"
+        assert job["status"] == "completed"
+        assert len(FakeSamsung.pushes) == 1
+        logs = client.get("/api/v1/logs", params={"limit": 10}).json()
+        assert any("TV push job" in entry["message"] for entry in logs)
 
 @pytest.mark.asyncio
 async def test_automatic_tv_sync_continues_when_wake_fails(tmp_path, monkeypatch):

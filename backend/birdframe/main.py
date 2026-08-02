@@ -179,7 +179,7 @@ class BirdFrameService:
             raise AdapterError("Configure a Samsung TV host first")
         row = row or self.store.current_composition() or await self.render()
         async with self.tv_lock:
-            tv = SamsungFrameClient(settings.tv_host, token=self.store.secret("samsung_token"))
+            tv = SamsungFrameClient(settings.tv_host, token=self.store.secret("samsung_token"), timeout=60)
             result = await tv.upload_and_select(Path(row["path"]).read_bytes(), matte=settings.tv_matte, show=True)
             previous = self.store.record_tv_upload(row["id"], result.content_id)
             deleted_previous = False
@@ -846,15 +846,28 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         finally:
             await client.aclose()
 
-    @app.post("/api/v1/tv/push")
-    async def push_tv() -> dict[str, object]:
-        try:
-            return await service.push_to_tv()
-        except ProviderUnavailable as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        except AdapterError as exc:
-            status_code = 400 if "Configure a Samsung TV host" in str(exc) else 502
-            raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    @app.post("/api/v1/tv/push", status_code=202)
+    async def push_tv() -> dict[str, int]:
+        """Queue a TV push as a background job so the web UI never blocks on it."""
+        settings = store.get_settings()
+        if not settings.tv_host:
+            raise HTTPException(status_code=400, detail="Configure a Samsung TV host first")
+        row = store.current_composition() or await service.render()
+        job_id = store.create_job("tv_push", {"revision": row["revision"]})
+
+        async def run_push() -> None:
+            store.update_job(job_id, status="running")
+            service.log("info", f"TV push job {job_id} started for revision {row['revision']}")
+            try:
+                result = await service.push_to_tv(row)
+                store.update_job(job_id, status="completed", result=result)
+                service.log("info", f"TV push job {job_id} completed for revision {row['revision']}")
+            except Exception as exc:
+                store.update_job(job_id, status="failed", error=str(exc))
+                service.log("error", f"TV push job {job_id} failed: {exc}")
+
+        asyncio.create_task(run_push())
+        return {"id": job_id}
 
     static = frontend_directory()
     if static.exists():
