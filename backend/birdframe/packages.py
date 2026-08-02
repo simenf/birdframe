@@ -83,7 +83,7 @@ async def fetch_catalog(url: str) -> list[dict[str, Any]]:
     return valid
 
 
-def install_archive(archive: Path, package_id: str, destination: Path) -> dict[str, Any]:
+def install_archive(archive: Path, package_id: str, destination: Path, progress: Any = None) -> dict[str, Any]:
     if not SAFE_ID.fullmatch(package_id):
         raise PackageError("Invalid package id")
     destination.mkdir(parents=True, exist_ok=True)
@@ -98,7 +98,10 @@ def install_archive(archive: Path, package_id: str, destination: Path) -> dict[s
             raise PackageError("Package is not a valid ZIP archive") from exc
         with bundle:
             total = 0
-            for item in bundle.infolist():
+            infolist = bundle.infolist()
+            extract_total = max(1, sum(1 for item in infolist if not item.is_dir()))
+            extracted = 0
+            for item in infolist:
                 name = Path(item.filename)
                 unix_mode = item.external_attr >> 16
                 is_symlink = (unix_mode & 0o170000) == 0o120000
@@ -115,6 +118,9 @@ def install_archive(archive: Path, package_id: str, destination: Path) -> dict[s
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with bundle.open(item) as source, target.open("wb") as output:
                     shutil.copyfileobj(source, output)
+                extracted += 1
+                if progress is not None:
+                    progress(extracted / extract_total, "extracting")
         manifest = staging / "manifest.json"
         generated_manifest = _avianvisitors_manifest(staging, package_id) if not manifest.exists() else None
         if not manifest.exists():
@@ -140,7 +146,7 @@ def install_archive(archive: Path, package_id: str, destination: Path) -> dict[s
         return {"id": package_id, "path": str(target), "manifest": metadata}
 
 
-async def install_package(entry: dict[str, Any], destination: Path) -> dict[str, Any]:
+async def install_package(entry: dict[str, Any], destination: Path, progress: Any = None) -> dict[str, Any]:
     package_id = str(entry.get("id", ""))
     if not SAFE_ID.fullmatch(package_id):
         raise PackageError("Invalid package id")
@@ -154,6 +160,7 @@ async def install_package(entry: dict[str, Any], destination: Path) -> dict[str,
             async with httpx.AsyncClient(timeout=120, follow_redirects=False) as client:
                 async with client.stream("GET", download_url) as response:
                     response.raise_for_status()
+                    content_length = int(response.headers.get("content-length") or 0)
                     written = 0
                     with archive.open("wb") as output:
                         async for chunk in response.aiter_bytes():
@@ -161,15 +168,19 @@ async def install_package(entry: dict[str, Any], destination: Path) -> dict[str,
                             if written > MAX_ARCHIVE_BYTES:
                                 raise PackageError("Package archive exceeds the 500 MB limit")
                             output.write(chunk)
+                            if progress is not None and content_length > 0:
+                                progress(min(1.0, written / content_length), "downloading")
         except httpx.HTTPError as exc:
             raise PackageError(f"Could not download package: {exc}") from exc
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
         if digest != expected:
             raise PackageError("Package checksum does not match the catalog")
-        return install_archive(archive, package_id, destination)
+        if progress is not None:
+            progress(1.0, "extracting")
+        return install_archive(archive, package_id, destination, progress=progress)
 
 
-async def install_package_url(url: str, package_id: str, destination: Path) -> dict[str, Any]:
+async def install_package_url(url: str, package_id: str, destination: Path, progress: Any = None) -> dict[str, Any]:
     """Download and install a direct HTTPS ZIP URL without a catalog."""
     _https_url(url)
     if not SAFE_ID.fullmatch(package_id):
@@ -180,6 +191,7 @@ async def install_package_url(url: str, package_id: str, destination: Path) -> d
             async with httpx.AsyncClient(timeout=120, follow_redirects=False) as client:
                 async with client.stream("GET", url) as response:
                     response.raise_for_status()
+                    content_length = int(response.headers.get("content-length") or 0)
                     written = 0
                     with archive.open("wb") as output:
                         async for chunk in response.aiter_bytes():
@@ -187,6 +199,10 @@ async def install_package_url(url: str, package_id: str, destination: Path) -> d
                             if written > MAX_ARCHIVE_BYTES:
                                 raise PackageError("Package archive exceeds the 500 MB limit")
                             output.write(chunk)
+                            if progress is not None and content_length > 0:
+                                progress(min(1.0, written / content_length), "downloading")
         except httpx.HTTPError as exc:
             raise PackageError(f"Could not download package: {exc}") from exc
-        return install_archive(archive, package_id, destination)
+        if progress is not None:
+            progress(1.0, "extracting")
+        return install_archive(archive, package_id, destination, progress=progress)

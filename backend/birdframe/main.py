@@ -8,6 +8,7 @@ import logging
 import os
 import shutil
 import tempfile
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -724,12 +725,23 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         job_id = store.create_job("package_install", {"package_id": payload.package_id})
         async def install() -> None:
             store.update_job(job_id, status="running")
+            service.log("info", f"Package install job {job_id} started: {payload.package_id}")
+            last_report = 0.0
+            def report(fraction: float, phase: str) -> None:
+                nonlocal last_report
+                now = time.monotonic()
+                if fraction < 1.0 and now - last_report < 0.5:
+                    return
+                last_report = now
+                store.update_job(job_id, status="running", result={"phase": phase, "progress": round(fraction, 3)})
             try:
-                result = await install_package(entry, store.art_dir / "packages")
-                store.update_job(job_id, status="completed", result=result)
+                result = await install_package(entry, store.art_dir / "packages", progress=report)
+                store.update_job(job_id, status="completed", result={**result, "phase": "done", "progress": 1.0})
+                service.log("info", f"Package install job {job_id} completed: {payload.package_id}")
                 await service.render()
             except PackageError as exc:
                 store.update_job(job_id, status="failed", error=str(exc))
+                service.log("error", f"Package install job {job_id} failed: {exc}")
         asyncio.create_task(install())
         return {"id": job_id}
 
@@ -749,13 +761,13 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         content_length = request.headers.get("content-length")
         if content_length and content_length.isdigit() and int(content_length) > MAX_ARCHIVE_BYTES:
             shutil.rmtree(temporary, ignore_errors=True)
-            raise HTTPException(status_code=413, detail="Package archive exceeds the 500 MB limit")
+            raise HTTPException(status_code=413, detail="Package archive exceeds the 1 GB limit")
         body = await request.body()
         written = len(body)
         try:
             with archive.open("wb") as output:
                 if written > MAX_ARCHIVE_BYTES:
-                    raise HTTPException(status_code=413, detail="Package archive exceeds the 500 MB limit")
+                    raise HTTPException(status_code=413, detail="Package archive exceeds the 1 GB limit")
                 output.write(body)
         except HTTPException:
             shutil.rmtree(temporary, ignore_errors=True)
@@ -763,12 +775,23 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         job_id = store.create_job("package_upload", {"package_id": package_id, "filename": filename})
         async def install() -> None:
             store.update_job(job_id, status="running")
+            service.log("info", f"Package upload install job {job_id} started: {package_id}")
+            last_report = 0.0
+            def report(fraction: float, phase: str) -> None:
+                nonlocal last_report
+                now = time.monotonic()
+                if fraction < 1.0 and now - last_report < 0.5:
+                    return
+                last_report = now
+                store.update_job(job_id, status="running", result={"phase": phase, "progress": round(fraction, 3)})
             try:
-                result = install_archive(archive, package_id, store.art_dir / "packages")
-                store.update_job(job_id, status="completed", result=result)
+                result = install_archive(archive, package_id, store.art_dir / "packages", progress=report)
+                store.update_job(job_id, status="completed", result={**result, "phase": "done", "progress": 1.0})
+                service.log("info", f"Package upload install job {job_id} completed: {package_id}")
                 await service.render()
             except (PackageError, OSError) as exc:
                 store.update_job(job_id, status="failed", error=str(exc))
+                service.log("error", f"Package upload install job {job_id} failed: {exc}")
             finally:
                 shutil.rmtree(temporary, ignore_errors=True)
         asyncio.create_task(install())
@@ -785,12 +808,23 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         job_id = store.create_job("package_url_install", {"package_id": package_id, "url": payload.url})
         async def install() -> None:
             store.update_job(job_id, status="running")
+            service.log("info", f"Package URL install job {job_id} started: {package_id}")
+            last_report = 0.0
+            def report(fraction: float, phase: str) -> None:
+                nonlocal last_report
+                now = time.monotonic()
+                if fraction < 1.0 and now - last_report < 0.5:
+                    return
+                last_report = now
+                store.update_job(job_id, status="running", result={"phase": phase, "progress": round(fraction, 3)})
             try:
-                result = await install_package_url(payload.url, package_id, store.art_dir / "packages")
-                store.update_job(job_id, status="completed", result=result)
+                result = await install_package_url(payload.url, package_id, store.art_dir / "packages", progress=report)
+                store.update_job(job_id, status="completed", result={**result, "phase": "done", "progress": 1.0})
+                service.log("info", f"Package URL install job {job_id} completed: {package_id}")
                 await service.render()
             except (PackageError, OSError) as exc:
                 store.update_job(job_id, status="failed", error=str(exc))
+                service.log("error", f"Package URL install job {job_id} failed: {exc}")
         asyncio.create_task(install())
         return {"id": job_id}
 

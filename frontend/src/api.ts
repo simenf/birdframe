@@ -76,6 +76,6 @@ export const api = {
   packageCatalog: () => request<Array<{ id: string; version?: string; download_url: string; sha256: string }>>("/art/packages/catalog"),
   uploadPackage: (file: File) => request<{ id: number }>("/art/packages/upload", { method: "POST", headers: { "Content-Type": "application/zip", "X-BirdFrame-Filename": file.name }, body: file }),
   installPackageUrl: (url: string, package_id?: string) => request<{ id: number }>("/art/packages/install-url", { method: "POST", body: JSON.stringify({ url, package_id: package_id || "" }) }),
-  jobs: () => request<Array<{ id: number; kind: string; status: string; error?: string; updated_at: string }>>("/jobs"),
+  jobs: () => request<Array<{ id: number; kind: string; status: string; error?: string; updated_at: string; result?: { phase?: string; progress?: number } }>>("/jobs"),
   logs: (offset = 0, limit = 25) => request<LogPage>(`/logs?limit=${limit}&offset=${offset}`),
 };
