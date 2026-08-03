@@ -129,7 +129,14 @@ class BirdFrameService:
     async def render(self) -> dict[str, Any]:
         async with self.render_lock:
             settings = self.store.get_settings()
-            detections = self.store.recent_detections(settings.collage_hours, min_confidence=settings.confidence_threshold)
+            if settings.display_mode == "journal":
+                # The journal counts a real day: everything since local midnight
+                # in the configured timezone, not the configurable collage window.
+                local = datetime.now(UTC).astimezone(_settings_timezone(settings))
+                midnight = local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
+                detections = self.store.detections_since(midnight, min_confidence=settings.confidence_threshold)
+            else:
+                detections = self.store.recent_detections(settings.collage_hours, min_confidence=settings.confidence_threshold)
             grouped = group_detections(detections)
             if settings.display_mode == "latest_visitor":
                 image, species = latest_visitor_image(grouped, settings, self.store.art_dir)

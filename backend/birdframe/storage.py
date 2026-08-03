@@ -187,6 +187,22 @@ class Store:
             created_at=datetime.fromisoformat(row["created_at"]),
         ) for row in rows]
 
+    def detections_since(self, cutoff: datetime, *, limit: int | None = None, min_confidence: float = 0.0) -> list[Detection]:
+        """Detections at or after an absolute cutoff (e.g. local midnight for the journal)."""
+        sql = "SELECT * FROM detections WHERE unixepoch(detected_at)>=? AND confidence>=? ORDER BY detected_at DESC"
+        params: list[Any] = [cutoff.timestamp(), min_confidence]
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        with self.connection() as db:
+            rows = db.execute(sql, params).fetchall()
+        return [Detection(
+            id=row["id"], source_type=row["source_type"], source_event_id=row["source_event_id"],
+            common_name=row["common_name"], scientific_name=row["scientific_name"], species_code=row["species_code"],
+            confidence=row["confidence"], detected_at=datetime.fromisoformat(row["detected_at"]),
+            created_at=datetime.fromisoformat(row["created_at"]),
+        ) for row in rows]
+
     def has_recent_species_detection(self, species_key: str, since: datetime, min_confidence: float = 0.0) -> bool:
         """True when a detection of the species exists at or after ``since``.
 

@@ -1,8 +1,11 @@
 from pathlib import Path
+from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
 from birdframe.main import create_app
+from birdframe.schemas import DetectionCreate
+from birdframe.storage import Store
 from tests.helpers import authed
 
 
@@ -142,6 +145,43 @@ def test_journal_display_mode_renders_a_journal_page(tmp_path: Path):
         jpg = client.get("/api/v1/display/current.jpg")
         assert jpg.status_code == 200
         assert jpg.headers["content-type"] == "image/jpeg"
+
+
+def test_journal_counts_only_from_local_midnight(tmp_path: Path):
+    app = create_app(tmp_path)
+    with TestClient(app) as client:
+        authed(client)
+        settings = client.get("/api/v1/settings").json()
+        settings.update({"display_mode": "journal", "timezone": "UTC"})
+        assert client.put("/api/v1/settings", json=settings).status_code == 200
+        now = datetime.now(UTC)
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        assert client.post("/api/v1/detections", json={
+            "common_name": "Eurasian Magpie", "scientific_name": "Pica pica",
+            "confidence": 0.99, "source_event_id": "yesterday-evening",
+            "detected_at": (midnight - timedelta(hours=2)).isoformat(),
+        }).status_code == 201
+        assert client.post("/api/v1/detections", json={
+            "common_name": "Common Swift", "scientific_name": "Apus apus",
+            "confidence": 0.99, "source_event_id": "today",
+            "detected_at": now.isoformat(),
+        }).status_code == 201
+        current = client.get("/api/v1/display/current.json").json()
+        assert [item["common_name"] for item in current["species"]] == ["Common Swift"]
+
+
+def test_detections_since_has_no_500_row_cap(tmp_path: Path):
+    store = Store(tmp_path)
+    now = datetime.now(UTC)
+    for index in range(520):
+        assert store.add_detection(DetectionCreate(
+            common_name="Common Swift", scientific_name="Apus apus",
+            confidence=0.99, source_event_id=f"cap-{index}",
+            detected_at=now - timedelta(seconds=index),
+        )) is not None
+    rows = store.detections_since(now.replace(hour=0, minute=0, second=0, microsecond=0), min_confidence=0.9)
+    assert len(rows) == 520
+    assert {row.scientific_name for row in rows} == {"Apus apus"}
 
 
 def test_settings_survive_application_restart(tmp_path: Path):
