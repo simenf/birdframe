@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from birdframe import main as birdframe_main
 from birdframe.adapters import wake_on_lan
 from birdframe.main import create_app, in_quiet_hours
-from birdframe.schemas import PublicSettings
+from birdframe.schemas import DetectionCreate, PublicSettings
 from tests.helpers import authed
 
 
@@ -71,6 +71,19 @@ def test_duplicate_cooldown_skips_rerender_for_repeat_species(tmp_path):
             "confidence": 1.0, "source_event_id": "three",
         })
         assert revision() > after_first
+
+
+def test_display_exclusion_reason_distinguishes_confidence_and_cooldown(tmp_path):
+    app = create_app(tmp_path)
+    service = app.state.service
+    low = DetectionCreate(common_name="Quiet Finch", scientific_name="Fringilla quietus", confidence=0.7)
+    assert service.display_exclusion_reason(low) == "confidence 0.700 below threshold 0.800"
+    service.store.add_detection(DetectionCreate(
+        common_name="Common Swift", scientific_name="Apus apus", confidence=0.99,
+        source_event_id="first-swift", detected_at=datetime.now(UTC),
+    ))
+    repeat = DetectionCreate(common_name="Common Swift", scientific_name="Apus apus", confidence=0.957)
+    assert service.display_exclusion_reason(repeat) == "duplicate cooldown (5 min)"
 
 
 def test_quiet_hours_window_overnight_and_timezone():

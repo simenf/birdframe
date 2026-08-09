@@ -14,8 +14,8 @@ and users.
 2. **Location.** Enter/search a location, verify latitude/longitude, choose
    timezone and language. Location improves regional preparation and local
    detection filtering.
-3. **Detection source.** Choose exactly one active source: BirdWeather or local
-   BirdNET-Go. Test the connection before saving it.
+3. **Detection source.** Choose exactly one active source: BirdWeather or
+   **Birdnet-GO or Birdframe Birdprovider**. Test the connection before saving it.
 4. **Samsung Frame.** Discover a TV or enter its IP manually, approve pairing
    on the TV, and run the upload test. The wizard deletes only its own test
    image after success.

@@ -6,15 +6,16 @@ import hmac
 from io import BytesIO
 import logging
 import os
+import re
 import shutil
 import tempfile
 import time
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
@@ -46,6 +47,32 @@ def data_directory() -> Path:
 
 def frontend_directory() -> Path:
     return Path(os.environ.get("BIRDFRAME_FRONTEND_DIST", "/app/frontend-dist"))
+
+
+def safe_provider_endpoint(url: str) -> str:
+    """Return a log-friendly provider URL without credentials or query data."""
+    try:
+        parsed = urlsplit(url)
+        hostname = parsed.hostname
+    except ValueError:
+        return "configured endpoint"
+    if not parsed.scheme or not hostname:
+        return "configured endpoint"
+    host = hostname
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    try:
+        port = f":{parsed.port}" if parsed.port else ""
+    except ValueError:
+        port = ""
+    return f"{parsed.scheme}://{host}{port}"
+
+
+def safe_provider_detail(detail: object) -> str:
+    """Keep provider diagnostics useful without copying URLs into activity logs."""
+    text = str(detail or "no status returned")
+    text = re.sub(r"https?://[^\s'\"]+", "<provider>", text)
+    return text[:200]
 
 
 def _settings_timezone(settings: PublicSettings) -> ZoneInfo:
@@ -155,22 +182,22 @@ class BirdFrameService:
                 queue.put_nowait(row["revision"])
             return row
 
-    def qualifies_for_display(self, payload: DetectionCreate) -> bool:
-        """Display policy: confidence threshold and per-species duplicate cooldown.
-
-        The policy decides whether a stored detection becomes a display event
-        (a composition render). It does not remove the detection from history.
-        """
+    def display_exclusion_reason(self, payload: DetectionCreate) -> str | None:
+        """Explain why a detection will not trigger a display update."""
         settings = self.store.get_settings()
         if payload.confidence < settings.confidence_threshold:
-            return False
+            return f"confidence {payload.confidence:.3f} below threshold {settings.confidence_threshold:.3f}"
         if settings.duplicate_cooldown_minutes > 0:
             occurred = (payload.detected_at or datetime.now(UTC)).astimezone(UTC)
             since = occurred - timedelta(minutes=settings.duplicate_cooldown_minutes)
             key = payload.scientific_name.strip() or payload.common_name.strip()
             if key and self.store.has_recent_species_detection(key, since, min_confidence=settings.confidence_threshold):
-                return False
-        return True
+                return f"duplicate cooldown ({settings.duplicate_cooldown_minutes} min)"
+        return None
+
+    def qualifies_for_display(self, payload: DetectionCreate) -> bool:
+        """Return whether a detection should trigger a display update."""
+        return self.display_exclusion_reason(payload) is None
 
     async def ingest(self, payload: DetectionCreate, *, render: bool = True) -> Detection | None:
         qualifying = self.qualifies_for_display(payload)
@@ -274,6 +301,22 @@ async def source_worker(service: BirdFrameService, stop: asyncio.Event) -> None:
     """Conservative source worker; all ingest paths still share deduplication and rendering."""
     cursor: str | None = None
     last_source = ""
+    birdnet_retry_seconds = 5
+
+    async def wait_for_birdnet_settings_change(initial: PublicSettings) -> str:
+        """Watch source settings while the long-lived SSE read waits for events."""
+        while not stop.is_set():
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=5)
+                return "stopping"
+            except asyncio.TimeoutError:
+                pass
+            current = service.store.get_settings()
+            if current.detection_source != "birdnet_go":
+                return "detection source changed"
+            if current.birdnet_go_url != initial.birdnet_go_url:
+                return "BirdNET-Go address changed"
+        return "stopping"
 
     async def pause(seconds: int) -> None:
         """Wait for a source poll interval without allowing its timeout to kill the worker."""
@@ -284,7 +327,8 @@ async def source_worker(service: BirdFrameService, stop: asyncio.Event) -> None:
 
     while not stop.is_set():
         settings = service.store.get_settings()
-        if settings.detection_source != last_source:
+        source_changed = settings.detection_source != last_source
+        if source_changed:
             cursor, last_source = None, settings.detection_source
         try:
             if settings.detection_source == "birdweather":
@@ -333,24 +377,67 @@ async def source_worker(service: BirdFrameService, stop: asyncio.Event) -> None:
                     cursor = "live"
                 await pause(settings.birdweather_poll_seconds)
             else:
-                # Reconnect after each event so a source change is observed promptly.
+                # Keep one long-lived SSE connection. BirdNET-Go limits the
+                # number of connected clients, so reconnecting on an idle
+                # timeout can fill its client slots with stale connections.
+                if source_changed:
+                    service.log("info", f"BirdNET-Go API integration selected: {safe_provider_endpoint(settings.birdnet_go_url)}")
                 client = BirdNETGoClient(settings.birdnet_go_url)
                 stream = client.detections()
+                next_event: asyncio.Task[Detection] | None = None
+                settings_watch = asyncio.create_task(wait_for_birdnet_settings_change(settings))
                 try:
-                    item = await asyncio.wait_for(anext(stream), timeout=10)
-                    await service.ingest(DetectionCreate(
-                        common_name=item.common_name, scientific_name=item.scientific_name or "",
-                        species_code=item.species_code or "", confidence=item.confidence or 0,
-                        detected_at=item.occurred_at, source_type="birdnet_go", source_event_id=item.external_id,
-                    ))
-                except TimeoutError:
-                    pass
+                    while not stop.is_set():
+                        next_event = asyncio.create_task(anext(stream))
+                        done, _ = await asyncio.wait((next_event, settings_watch), return_when=asyncio.FIRST_COMPLETED)
+                        if settings_watch in done:
+                            reason = settings_watch.result()
+                            if reason != "stopping":
+                                service.log("info", f"BirdNET-Go API stream closing: {reason}")
+                            next_event.cancel()
+                            with suppress(asyncio.CancelledError, AdapterError, OSError):
+                                await next_event
+                            break
+                        try:
+                            item = next_event.result()
+                        except StopAsyncIteration:
+                            service.log("warning", "BirdNET-Go API stream ended; reconnecting")
+                            break
+                        payload = DetectionCreate(
+                            common_name=item.common_name, scientific_name=item.scientific_name or "",
+                            species_code=item.species_code or "", confidence=item.confidence or 0,
+                            detected_at=item.occurred_at, source_type="birdnet_go", source_event_id=item.external_id,
+                        )
+                        exclusion_reason = service.display_exclusion_reason(payload)
+                        created = await service.ingest(payload)
+                        confidence = payload.confidence
+                        if created is None:
+                            service.log("warning", f"BirdNET-Go detection ignored as a duplicate: {item.common_name} ({item.external_id})")
+                        elif exclusion_reason:
+                            service.log("info", f"BirdNET-Go detection stored but excluded from display: {item.common_name} ({exclusion_reason})")
+                        else:
+                            service.log("info", f"BirdNET-Go detection accepted for display: {item.common_name} ({confidence:.3f})")
+                        next_event = None
                 finally:
+                    settings_watch.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await settings_watch
+                    if next_event is not None and not next_event.done():
+                        next_event.cancel()
+                        with suppress(asyncio.CancelledError, AdapterError, OSError):
+                            await next_event
                     await stream.aclose()
                     await client.aclose()
+                birdnet_retry_seconds = 5
+                await pause(1)
         except (AdapterError, OSError, asyncio.TimeoutError) as exc:
-            service.log("warning", f"Detection source temporarily unavailable: {type(exc).__name__}")
-            await pause(5)
+            source_name = "BirdNET-Go API" if settings.detection_source == "birdnet_go" else "Detection source"
+            detail = safe_provider_detail(exc)
+            suffix = f": {detail}" if detail else ""
+            service.log("warning", f"{source_name} temporarily unavailable: {type(exc).__name__}{suffix}")
+            await pause(birdnet_retry_seconds if settings.detection_source == "birdnet_go" else 5)
+            if settings.detection_source == "birdnet_go":
+                birdnet_retry_seconds = min(60, birdnet_retry_seconds * 2)
 
 
 async def tv_sync_worker(service: BirdFrameService, stop: asyncio.Event) -> None:
@@ -688,11 +775,20 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
                 client = PublicBirdWeatherClient(station_id)
             else:
                 settings = store.get_settings()
-                client = BirdNETGoClient(payload.url or settings.birdnet_go_url)
+                endpoint = payload.url or settings.birdnet_go_url
+                service.log("info", f"BirdNET-Go API connection test started: {safe_provider_endpoint(endpoint)}")
+                client = BirdNETGoClient(endpoint)
             health = await client.health()
             await client.aclose()
+            if payload.source == "birdnet_go":
+                level = "info" if health.available else "warning"
+                outcome = "succeeded" if health.available else "failed"
+                detail = safe_provider_detail(health.detail)
+                service.log(level, f"BirdNET-Go API connection test {outcome}: {detail}")
             return {"available": health.available, "detail": health.detail}
         except AdapterError as exc:
+            if payload.source == "birdnet_go":
+                service.log("error", f"BirdNET-Go API connection test failed: {safe_provider_detail(exc)}")
             return {"available": False, "detail": str(exc)}
 
     @app.get("/api/v1/art/occurrences")

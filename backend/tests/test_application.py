@@ -222,6 +222,33 @@ def test_settings_activity_is_available_in_the_web_log(tmp_path: Path):
         assert any("Settings saved" in entry["message"] for entry in logs)
 
 
+def test_birdnet_go_connection_test_is_logged(tmp_path: Path, monkeypatch):
+    from types import SimpleNamespace
+
+    class FakeBirdNETGoClient:
+        def __init__(self, url: str):
+            assert url == "http://birdnet-go:8080"
+
+        async def health(self):
+            return SimpleNamespace(available=True, detail="active")
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr("birdframe.main.BirdNETGoClient", FakeBirdNETGoClient)
+    app = create_app(tmp_path)
+    with TestClient(app) as client:
+        authed(client)
+        response = client.post("/api/v1/sources/test", json={
+            "source": "birdnet_go", "url": "http://birdnet-go:8080",
+        })
+        assert response.status_code == 200
+        assert response.json() == {"available": True, "detail": "active"}
+        messages = [entry["message"] for entry in client.get("/api/v1/logs").json()]
+        assert any("BirdNET-Go API connection test started" in message for message in messages)
+        assert any("BirdNET-Go API connection test succeeded: active" in message for message in messages)
+
+
 def test_health_reports_needs_setup_until_settings_are_saved(tmp_path: Path):
     app = create_app(tmp_path)
     with TestClient(app) as client:
