@@ -10,6 +10,7 @@ const steps: Array<{ id: Step; icon: string; label: string }> = [
 ];
 const defaults = { label: "", latitude: "", longitude: "", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, language: "no", source: "birdweather-public", birdweatherToken: "", birdweatherPublicStationId: "", birdnetUrl: "http://birdnet-go:8080", confidenceThreshold: "0.8", tvIp: "", tvName: "", tvMac: "", displayMode: "collage", collageWindow: "24h", tvAutoUpdate: true, wakeTv: false, quietStart: "", quietEnd: "", refreshMinutes: "5", openrouterApiKey: "", openrouterModel: "", paperTone: "warm cream", palette: "earthy", density: "standard", collageStyle: "classic", labels: false, scriptSize: "medium", catalogUrl: "", assetPack: "all", assetVariant: "illustrations" };
 type Settings = typeof defaults;
+const DEFAULT_ARTWORK_CATALOG_URL = "https://avianassets.simenf.com/catalog.json";
 
 function useRemoteData() {
   const [health, setHealth] = useState<Health>({ status: "starting", version: "", composition_revision: null }); const [display, setDisplay] = useState<Display>({}); const [birds, setBirds] = useState<RecentBird[]>([]); const [error, setError] = useState("");
@@ -32,10 +33,10 @@ export function App() {
     // Health starts as "starting", so a freshly loaded page briefly looks
     // unconfigured. Only force the setup pane for a genuinely unconfigured
     // installation, and once it reports configured, always land on Overview.
-    if (configured && !previouslyConfigured.current) setPage("dashboard");
+    if (configured && !previouslyConfigured.current && page !== "setup") setPage("dashboard");
     if (!configured && !data.error) setPage("setup");
     previouslyConfigured.current = configured;
-  }, [configured, data.error]);
+  }, [configured, data.error, page]);
   if (authChecking) return <div className="auth-shell"><p className="help-text">Checking session…</p></div>;
   if (!getApiKey()) return <div className="auth-shell">{data.error && <div className="offline-note"><span>◌</span>{data.error}</div>}<AuthScreen needsAdmin={data.health.needs_admin} onAuthed={(s) => { setApiKey(s.api_key); setSession({ username: s.username, is_admin: s.is_admin }); void data.refresh(); }} /></div>;
   const logout = async () => { try { await api.logout(); } catch { /* key already invalid */ } setApiKey(""); setSession(null); };
@@ -135,12 +136,22 @@ function AssetStep({ form, update }: { form: Settings; update: (k: keyof Setting
   const [message, setMessage] = useState("");
   const [installed, setInstalled] = useState<Array<{ id: string; illustrations: number; sketches: number }>>([]);
   const jobs = usePackageJobs();
-  const loadCatalog = async () => { try { const current = await api.settings(); await api.saveSettings({ ...current, package_catalog_url: form.catalogUrl }); const items = await api.packageCatalog(); setCatalog(items); setMessage(items.length ? "Catalog URL saved and loaded — install a pack below." : "Catalog URL saved, but the catalog listed no installable packs. Check that entries include id, an HTTPS download_url, and a 64-character sha256."); } catch { setMessage("Could not load catalog. Check that it is a public HTTPS JSON URL."); } };
+  useEffect(() => { if (!form.catalogUrl) update("catalogUrl", DEFAULT_ARTWORK_CATALOG_URL); }, [form.catalogUrl, update]);
+  const loadCatalog = async () => { try { const current = await api.settings(); const catalogUrl = form.catalogUrl || DEFAULT_ARTWORK_CATALOG_URL; await api.saveSettings({ ...current, package_catalog_url: catalogUrl }); const items = await api.packageCatalog(); setCatalog(items); setMessage(items.length ? "Catalog URL saved and loaded — install a pack below." : "Catalog URL saved, but the catalog listed no installable packs. Check that entries include id, an HTTPS download_url, and a 64-character sha256."); } catch { setMessage("Could not load catalog. Check that it is a public HTTPS JSON URL."); } };
   const install = async (entry: { id: string; download_url: string }) => { try { const job = await api.installPackageUrl(entry.download_url, entry.id); setMessage(`Install job ${job.id} queued — track it in Activity log.`); } catch { setMessage("Could not queue this package."); } };
   const installUrl = async () => { if (!packageUrl.trim()) return; try { const job = await api.installPackageUrl(packageUrl.trim()); setMessage(`Install job ${job.id} queued — track it in Activity log.`); setPackageUrl(""); } catch { setMessage("Could not queue download. Use a direct HTTPS ZIP URL."); } };
   const upload = async (event: React.ChangeEvent<HTMLInputElement>) => { const file = event.target.files?.[0]; if (!file) return; try { const job = await api.uploadPackage(file); setMessage(`Upload job ${job.id} queued — track it in Activity log.`); } catch { setMessage("Could not upload package. Choose a ZIP file with a safe filename."); } event.target.value = ""; };
   useEffect(() => { void api.packs().then(setInstalled).catch(() => undefined); }, []);
-  useEffect(() => { if (jobs.some((job) => job.status === "completed" || job.status === "failed")) void api.packs().then(setInstalled).catch(() => undefined); }, [jobs]);
+  const reportedJobs = useRef(new Set<number>());
+  useEffect(() => {
+    const finished = jobs.filter((job) => job.status === "completed" || job.status === "failed");
+    const newlyFinished = finished.find((job) => !reportedJobs.current.has(job.id));
+    if (!finished.length) return;
+    finished.forEach((job) => reportedJobs.current.add(job.id));
+    if (!newlyFinished) return;
+    void api.packs().then(setInstalled).catch(() => undefined);
+    setMessage(newlyFinished.status === "completed" ? "Artwork pack loaded successfully — it is now available to BirdFrame." : `Artwork pack could not be loaded: ${newlyFinished.error || "installation failed"}`);
+  }, [jobs]);
   return <div><div className="form-grid one"><Field label="Artwork catalog URL" hint="The official catalog is https://avianassets.simenf.com/catalog.json — or any compatible HTTPS catalog."><input value={form.catalogUrl} placeholder="https://avianassets.simenf.com/catalog.json" onChange={(e) => update("catalogUrl", e.target.value)} /></Field></div><div className="button-row"><button type="button" className="button ghost" onClick={() => void loadCatalog()}>Load catalog packages</button></div>{catalog.length > 0 && <div className="package-list">{catalog.map((entry) => <div className="package-entry" key={entry.id}><span><strong>{entry.id}</strong><small>{entry.version || "catalog package"}</small></span><button type="button" className="button small" onClick={() => void install(entry)}>Install</button></div>)}</div>}<div className="form-grid one"><Field label="Upload a ZIP pack" hint="Install directly from a local file — for example avianvisitors-western-us.zip."><input type="file" accept=".zip,application/zip" onChange={(event) => void upload(event)} /></Field><Field label="Direct HTTPS ZIP URL" hint="Downloads and installs after validation."><input value={packageUrl} placeholder="https://example.org/birds.zip" onChange={(event) => setPackageUrl(event.target.value)} /></Field></div><div className="button-row"><button type="button" className="button primary" onClick={() => void installUrl()}>Install URL pack</button></div>{message && <p className="form-notice">{message}</p>}<div className="toggle-row"><div><strong>Install activity</strong><p>Installs run in the background — progress and failures appear here and in Activity log.</p></div></div>{jobs.length > 0 ? <div className="package-list">{jobs.map((job) => <PackageJob key={job.id} job={job} />)}</div> : <p className="help-text">No package installs yet.</p>}<div className="toggle-row"><div><strong>Installed packs</strong><p>Packs available to the collage, with illustration and sketch counts.</p></div></div>{installed.length > 0 ? <div className="package-list">{installed.map((pack) => <div className="package-entry" key={pack.id}><span><strong>{pack.id}</strong><small>{pack.illustrations} illustrations · {pack.sketches} sketches</small></span></div>)}</div> : <p className="help-text">No packs installed yet — load the catalog, upload a ZIP, or install one above.</p>}</div>;
 }
 

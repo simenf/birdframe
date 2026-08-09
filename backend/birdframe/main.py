@@ -24,6 +24,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
+from . import __version__
 from .adapters import (AdapterError, BirdNETGoClient, BirdWeatherClient, OpenRouterClient,
                        ProviderUnavailable, PublicBirdWeatherClient, SamsungFrameClient, wake_on_lan)
 from .auth import api_key_prefix, generate_api_key, hash_api_key, hash_password
@@ -496,7 +497,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             cleanup.cancel()
             await asyncio.gather(worker, tv_worker, cleanup, return_exceptions=True)
 
-    app = FastAPI(title="BirdFrame", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="BirdFrame", version=__version__, lifespan=lifespan)
     app.state.store = store
     app.state.service = service
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -550,7 +551,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         current = store.current_composition()
         return {
             "status": "ok",
-            "version": "0.1.0",
+            "version": __version__,
             "composition_revision": current["revision"] if current else None,
             "needs_setup": store.needs_setup(),
             "needs_admin": store.user_count() == 0,

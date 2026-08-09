@@ -25,6 +25,14 @@
   and Display & TV wizard steps; Settings now covers artwork generation, the
   display API, and asset packs.
 
+## 0.1.1
+
+* Improved BirdNET-Go streaming reliability, connection-test logs, detection
+  exclusion diagnostics, and confidence-threshold controls.
+* Added the Birdnet-GO or Birdframe Birdprovider label and setup connection test.
+* Preloaded the artwork catalog URL and kept setup on the Assets step with
+  feedback when artwork packs finish loading.
+
 ## 0.1.0
 
 Initial hobby release: BirdWeather and BirdNET-Go detection adapters, 16:9
