@@ -25,6 +25,13 @@
   and Display & TV wizard steps; Settings now covers artwork generation, the
   display API, and asset packs.
 
+## 0.1.2
+
+* Hardened BirdNET-Go SSE monitoring with heartbeat-aware timeouts, automatic
+  worker recovery, source runtime status, and stream-aware connection tests.
+* Detection records and activity logs are preserved when artwork rendering
+  fails, so a display problem cannot stop source ingestion.
+
 ## 0.1.1
 
 * Improved BirdNET-Go streaming reliability, connection-test logs, detection

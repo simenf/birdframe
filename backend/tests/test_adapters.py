@@ -4,7 +4,7 @@ import json
 import httpx
 import pytest
 
-from birdframe.adapters import BirdNETGoClient, BirdWeatherClient, OpenRouterClient, PublicBirdWeatherClient, SamsungFrameClient
+from birdframe.adapters import BIRDNET_GO_SSE_READ_TIMEOUT, BirdNETGoClient, BirdWeatherClient, OpenRouterClient, PublicBirdWeatherClient, SamsungFrameClient
 
 
 def async_client(handler):
@@ -13,6 +13,8 @@ def async_client(handler):
 
 @pytest.mark.asyncio
 async def test_birdnet_sse_yields_detection_and_ignores_heartbeat():
+    activity = []
+
     async def handler(request):
         assert request.headers["accept"] == "text/event-stream"
         return httpx.Response(200, content=(
@@ -21,10 +23,32 @@ async def test_birdnet_sse_yields_detection_and_ignores_heartbeat():
             b"event: detection\ndata: {\"id\":7,\"timestamp\":\"2026-01-02T03:04:05Z\",\"commonName\":\"Eurasian Blackbird\",\"scientificName\":\"Turdus merula\",\"confidence\":0.91}\n\n"
         ))
     client = async_client(handler)
-    adapter = BirdNETGoClient("http://birdnet:8080", client=client)
+    adapter = BirdNETGoClient("http://birdnet:8080", client=client, on_activity=activity.append)
     received = [item async for item in adapter.detections()]
     assert [(item.provider, item.external_id, item.common_name) for item in received] == [("birdnet-go", "7", "Eurasian Blackbird")]
+    assert activity == ["connected", "heartbeat", "detection"]
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_birdnet_stream_health_checks_the_sse_endpoint():
+    async def handler(request):
+        assert request.url.path == "/api/v2/detections/stream"
+        return httpx.Response(200, content=b"event: connected\ndata: {\"type\":\"detections\"}\n\n")
+
+    client = async_client(handler)
+    adapter = BirdNETGoClient("http://birdnet:8080", client=client)
+    result = await adapter.stream_health()
+    assert result.available is True
+    assert result.detail == "detection stream connected"
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_birdnet_sse_allows_three_provider_heartbeat_intervals():
+    adapter = BirdNETGoClient("http://birdnet:8080")
+    assert adapter._client.timeout.read == BIRDNET_GO_SSE_READ_TIMEOUT
+    await adapter.aclose()
 
 
 @pytest.mark.asyncio

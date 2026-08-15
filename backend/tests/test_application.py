@@ -1,10 +1,14 @@
+import asyncio
 from pathlib import Path
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 
 from birdframe.main import create_app
-from birdframe.schemas import DetectionCreate
+from birdframe.adapters import Detection
+from birdframe.main import BirdFrameService, source_worker
+from birdframe.schemas import DetectionCreate, SettingsUpdate
 from birdframe.storage import Store
 from tests.helpers import authed
 
@@ -232,6 +236,9 @@ def test_birdnet_go_connection_test_is_logged(tmp_path: Path, monkeypatch):
         async def health(self):
             return SimpleNamespace(available=True, detail="active")
 
+        async def stream_health(self):
+            return SimpleNamespace(available=True, detail="detection stream connected")
+
         async def aclose(self):
             return None
 
@@ -243,10 +250,10 @@ def test_birdnet_go_connection_test_is_logged(tmp_path: Path, monkeypatch):
             "source": "birdnet_go", "url": "http://birdnet-go:8080",
         })
         assert response.status_code == 200
-        assert response.json() == {"available": True, "detail": "active"}
+        assert response.json() == {"available": True, "detail": "active; detection stream connected"}
         messages = [entry["message"] for entry in client.get("/api/v1/logs").json()]
         assert any("BirdNET-Go API connection test started" in message for message in messages)
-        assert any("BirdNET-Go API connection test succeeded: active" in message for message in messages)
+        assert any("BirdNET-Go API connection test succeeded: active; detection stream connected" in message for message in messages)
 
 
 def test_health_reports_needs_setup_until_settings_are_saved(tmp_path: Path):
@@ -257,3 +264,52 @@ def test_health_reports_needs_setup_until_settings_are_saved(tmp_path: Path):
         settings = client.get("/api/v1/settings").json()
         assert client.put("/api/v1/settings", json=settings).status_code == 200
         assert client.get("/api/v1/health").json()["needs_setup"] is False
+
+
+@pytest.mark.asyncio
+async def test_birdnet_worker_logs_detection_before_render_failure(tmp_path: Path, monkeypatch):
+    store = Store(tmp_path)
+    store.save_settings(SettingsUpdate(detection_source="birdnet_go", birdnet_go_url="http://birdnet-go:8080"))
+    service = BirdFrameService(store)
+    stop = asyncio.Event()
+    processed = asyncio.Event()
+    original_log = service.log
+
+    def log(level: str, message: str) -> None:
+        original_log(level, message)
+        if "Second bird" in message:
+            processed.set()
+
+    service.log = log  # type: ignore[method-assign]
+
+    async def broken_render():
+        raise RuntimeError("simulated composition failure")
+
+    service.render = broken_render  # type: ignore[method-assign]
+
+    class FakeBirdNETGoClient:
+        def __init__(self, url: str, *, on_activity=None):
+            self.on_activity = on_activity
+
+        def detections(self):
+            async def stream():
+                if self.on_activity:
+                    self.on_activity("connected")
+                yield Detection("birdnet-go", "first", datetime.now(UTC), "First bird", "Firstus birdus", .91)
+                yield Detection("birdnet-go", "second", datetime.now(UTC), "Second bird", "Secondus birdus", .70)
+                await stop.wait()
+            return stream()
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr("birdframe.main.BirdNETGoClient", FakeBirdNETGoClient)
+    task = asyncio.create_task(source_worker(service, stop))
+    await asyncio.wait_for(processed.wait(), timeout=1)
+    stop.set()
+    await asyncio.wait_for(task, timeout=1)
+
+    messages = [entry["message"] for entry in store.logs()[0]]
+    assert any("First bird (0.910)" in message for message in messages)
+    assert any("artwork update failed after First bird" in message for message in messages)
+    assert any("Second bird" in message for message in messages)

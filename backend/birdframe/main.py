@@ -25,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
 from . import __version__
-from .adapters import (AdapterError, BirdNETGoClient, BirdWeatherClient, OpenRouterClient,
+from .adapters import (AdapterError, BirdNETGoClient, BirdWeatherClient, Health, OpenRouterClient,
                        ProviderUnavailable, PublicBirdWeatherClient, SamsungFrameClient, wake_on_lan)
 from .auth import api_key_prefix, generate_api_key, hash_api_key, hash_password
 from .compositor import (SpeciesCount, collage_image, group_detections, journal_image,
@@ -149,10 +149,33 @@ class BirdFrameService:
         self.events: set[asyncio.Queue[int]] = set()
         self.render_lock = asyncio.Lock()
         self.tv_lock = asyncio.Lock()
+        self.source_runtime: dict[str, object] = {
+            "state": "starting",
+            "last_activity_at": None,
+            "last_detection_at": None,
+            "reconnects": 0,
+            "last_error": None,
+        }
 
     def log(self, level: str, message: str) -> None:
         self.store.log(level, message)
         getattr(logger, level.lower(), logger.info)(message)
+
+    def note_source_state(self, state: str, *, error: str | None = None, reconnect: bool = False) -> None:
+        self.source_runtime["state"] = state
+        self.source_runtime["last_error"] = error
+        if reconnect:
+            self.source_runtime["reconnects"] = int(self.source_runtime["reconnects"]) + 1
+
+    def note_source_activity(self, kind: str) -> None:
+        now = datetime.now(UTC).isoformat()
+        self.source_runtime["last_activity_at"] = now
+        self.source_runtime["last_error"] = None
+        if kind in {"connected", "heartbeat"}:
+            self.source_runtime["state"] = "connected"
+        elif kind == "detection":
+            self.source_runtime["state"] = "receiving"
+            self.source_runtime["last_detection_at"] = now
 
     async def render(self) -> dict[str, Any]:
         async with self.render_lock:
@@ -327,7 +350,17 @@ async def source_worker(service: BirdFrameService, stop: asyncio.Event) -> None:
             pass
 
     while not stop.is_set():
-        settings = service.store.get_settings()
+        try:
+            settings = service.store.get_settings()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            detail = safe_provider_detail(exc)
+            service.note_source_state("retrying", error=f"{type(exc).__name__}: {detail}")
+            service.log("error", f"Detection source settings read failed; retrying: {type(exc).__name__}: {detail}")
+            logger.exception("Detection source settings read failed; retrying")
+            await pause(5)
+            continue
         source_changed = settings.detection_source != last_source
         if source_changed:
             cursor, last_source = None, settings.detection_source
@@ -383,7 +416,8 @@ async def source_worker(service: BirdFrameService, stop: asyncio.Event) -> None:
                 # timeout can fill its client slots with stale connections.
                 if source_changed:
                     service.log("info", f"BirdNET-Go API integration selected: {safe_provider_endpoint(settings.birdnet_go_url)}")
-                client = BirdNETGoClient(settings.birdnet_go_url)
+                service.note_source_state("connecting", reconnect=not source_changed)
+                client = BirdNETGoClient(settings.birdnet_go_url, on_activity=service.note_source_activity)
                 stream = client.detections()
                 next_event: asyncio.Task[Detection] | None = None
                 settings_watch = asyncio.create_task(wait_for_birdnet_settings_change(settings))
@@ -410,7 +444,7 @@ async def source_worker(service: BirdFrameService, stop: asyncio.Event) -> None:
                             detected_at=item.occurred_at, source_type="birdnet_go", source_event_id=item.external_id,
                         )
                         exclusion_reason = service.display_exclusion_reason(payload)
-                        created = await service.ingest(payload)
+                        created = await service.ingest(payload, render=False)
                         confidence = payload.confidence
                         if created is None:
                             service.log("warning", f"BirdNET-Go detection ignored as a duplicate: {item.common_name} ({item.external_id})")
@@ -418,6 +452,14 @@ async def source_worker(service: BirdFrameService, stop: asyncio.Event) -> None:
                             service.log("info", f"BirdNET-Go detection stored but excluded from display: {item.common_name} ({exclusion_reason})")
                         else:
                             service.log("info", f"BirdNET-Go detection accepted for display: {item.common_name} ({confidence:.3f})")
+                            try:
+                                await service.render()
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception as exc:
+                                detail = safe_provider_detail(exc)
+                                service.log("error", f"BirdNET-Go artwork update failed after {item.common_name}: {type(exc).__name__}: {detail}")
+                                logger.exception("BirdNET-Go artwork update failed after %s", item.common_name)
                         next_event = None
                 finally:
                     settings_watch.cancel()
@@ -435,7 +477,19 @@ async def source_worker(service: BirdFrameService, stop: asyncio.Event) -> None:
             source_name = "BirdNET-Go API" if settings.detection_source == "birdnet_go" else "Detection source"
             detail = safe_provider_detail(exc)
             suffix = f": {detail}" if detail else ""
+            service.note_source_state("retrying", error=f"{type(exc).__name__}{suffix}")
             service.log("warning", f"{source_name} temporarily unavailable: {type(exc).__name__}{suffix}")
+            await pause(birdnet_retry_seconds if settings.detection_source == "birdnet_go" else 5)
+            if settings.detection_source == "birdnet_go":
+                birdnet_retry_seconds = min(60, birdnet_retry_seconds * 2)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            source_name = "BirdNET-Go API" if settings.detection_source == "birdnet_go" else "Detection source"
+            detail = safe_provider_detail(exc)
+            service.note_source_state("retrying", error=f"{type(exc).__name__}: {detail}")
+            service.log("error", f"{source_name} worker failed; restarting: {type(exc).__name__}: {detail}")
+            logger.exception("%s worker failed; restarting", source_name)
             await pause(birdnet_retry_seconds if settings.detection_source == "birdnet_go" else 5)
             if settings.detection_source == "birdnet_go":
                 birdnet_retry_seconds = min(60, birdnet_retry_seconds * 2)
@@ -555,6 +609,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             "composition_revision": current["revision"] if current else None,
             "needs_setup": store.needs_setup(),
             "needs_admin": store.user_count() == 0,
+            "source": service.source_runtime,
         }
 
     @app.post("/api/v1/auth/bootstrap")
@@ -780,6 +835,12 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
                 service.log("info", f"BirdNET-Go API connection test started: {safe_provider_endpoint(endpoint)}")
                 client = BirdNETGoClient(endpoint)
             health = await client.health()
+            if health.available and payload.source == "birdnet_go":
+                stream_health = await client.stream_health()
+                if not stream_health.available:
+                    health = stream_health
+                else:
+                    health = Health(True, f"{health.detail or 'active'}; {stream_health.detail}")
             await client.aclose()
             if payload.source == "birdnet_go":
                 level = "info" if health.available else "warning"

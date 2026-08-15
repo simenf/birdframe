@@ -51,6 +51,9 @@ class SamsungUpload:
     content_id: str; selected: bool
 
 
+BIRDNET_GO_SSE_READ_TIMEOUT = 90.0
+
+
 def wake_on_lan(mac: str, *, broadcast: str = "255.255.255.255", port: int = 9) -> None:
     """Send a Wake-on-LAN magic packet for a TV MAC address.
 
@@ -84,8 +87,17 @@ def _float(value: Any) -> float | None:
 
 class BirdNETGoClient:
     """Async consumer of BirdNET-Go's public ``detection`` SSE events."""
-    def __init__(self, base_url: str, *, client: httpx.AsyncClient | None = None) -> None:
-        self.base_url = base_url.rstrip("/") + "/"; self._client = client or httpx.AsyncClient(timeout=httpx.Timeout(20, read=None)); self._owns = client is None
+    def __init__(self, base_url: str, *, client: httpx.AsyncClient | None = None,
+                 on_activity: Callable[[str], None] | None = None) -> None:
+        self.base_url = base_url.rstrip("/") + "/"
+        self._client = client or httpx.AsyncClient(timeout=httpx.Timeout(20, read=BIRDNET_GO_SSE_READ_TIMEOUT))
+        self._owns = client is None
+        self._on_activity = on_activity
+
+    def _activity(self, kind: str) -> None:
+        if self._on_activity:
+            self._on_activity(kind)
+
     async def aclose(self) -> None:
         if self._owns: await self._client.aclose()
     async def health(self) -> Health:
@@ -93,17 +105,40 @@ class BirdNETGoClient:
             response = await self._client.get(urljoin(self.base_url, "api/v2/sse/status")); response.raise_for_status(); body = response.json()
             return Health(body.get("status") == "active", body.get("status"))
         except (httpx.HTTPError, ValueError) as exc: return Health(False, str(exc))
+
+    async def stream_health(self) -> Health:
+        """Verify that the detection SSE endpoint opens and emits an event."""
+        try:
+            async with self._client.stream("GET", urljoin(self.base_url, "api/v2/detections/stream"), headers={"Accept": "text/event-stream"}) as response:
+                response.raise_for_status(); event = "message"
+                async for line in response.aiter_lines():
+                    if not line:
+                        if event in {"connected", "heartbeat", "detection"}:
+                            return Health(True, f"detection stream {event}")
+                        event = "message"
+                        continue
+                    if line.startswith("event:"): event = line[6:].strip()
+                return Health(False, "detection stream ended before sending an event")
+        except (httpx.HTTPError, ValueError) as exc:
+            return Health(False, str(exc))
+
     async def detections(self) -> AsyncIterator[Detection]:
         try:
             async with self._client.stream("GET", urljoin(self.base_url, "api/v2/detections/stream"), headers={"Accept": "text/event-stream"}) as response:
-                response.raise_for_status(); event, lines = "message", []
+                response.raise_for_status(); self._activity("connected"); event, lines = "message", []
                 async for line in response.aiter_lines():
                     if not line:
-                        if event == "detection" and lines: yield self._parse(json.loads("\n".join(lines)))
+                        if event == "heartbeat":
+                            self._activity("heartbeat")
+                        elif event == "detection" and lines:
+                            self._activity("detection")
+                            yield self._parse(json.loads("\n".join(lines)))
                         event, lines = "message", []; continue
                     if line.startswith("event:"): event = line[6:].strip()
                     elif line.startswith("data:"): lines.append(line[5:].lstrip())
-                if event == "detection" and lines: yield self._parse(json.loads("\n".join(lines)))
+                if event == "detection" and lines:
+                    self._activity("detection")
+                    yield self._parse(json.loads("\n".join(lines)))
         except (httpx.HTTPError, json.JSONDecodeError) as exc: raise AdapterError(f"BirdNET-Go stream failed: {exc}") from exc
     @staticmethod
     def _parse(data: dict[str, Any]) -> Detection:
