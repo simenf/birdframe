@@ -7,6 +7,13 @@ Frame TVs. It listens for birds through
 
 It is based on the ideas of [Avianvisitors](https://github.com/Twarner491/AvianVisitors) which is the same concept, but for e-ink displays. The frame journal view is based on [willmanidis2's frame-journal-layout fork](https://github.com/willmanidis2/AvianVisitors/tree/feat/frame-journal-layout)
 
+## Android bird detection
+
+The new [BirdFrame Bird Provider](https://github.com/simenf/birdframe-birdprovider)
+app performs bird detection on an Android device and supports the
+[BirdNET-Go API](https://github.com/tphakala/birdnet-go), so it can provide
+bird detections directly to BirdFrame.
+
 ![image](docs/screenshots/livingroom.jpg) 
 
 BirdFrame can draw your backyard in five ways.
