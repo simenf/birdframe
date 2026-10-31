@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import random
 from dataclasses import dataclass
@@ -89,6 +90,18 @@ def _packaged_candidates(package: Path, safe: str, pose: str, asset_variant: str
             package / "avian" / "assets" / "sketches" / avian_slug,
         )
         candidates = list(sketch_candidates) + candidates
+    # Hosted AvianVisitors v2 packs use numbered alternatives rather than
+    # perched/flight semantics. Rotate deterministically per species and pose
+    # so every declared alternative can be selected without flickering.
+    try:
+        metadata = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        metadata = {}
+    if isinstance(metadata, dict) and metadata.get("format") == "birdframe-avianvisitors-hosted-v1" and metadata.get("source_format_version") == 2:
+        variants = [package / "illustrations" / f"{safe}{'-' + str(number) if number > 1 else ''}.png" for number in range(1, 33)]
+        offset = int(hashlib.sha256(f"{safe}:{pose}".encode()).hexdigest()[:8], 16) % len(variants)
+        ordered_variants = variants[offset:] + variants[:offset]
+        candidates = (list(sketch_candidates) if asset_variant == "sketches" else []) + ordered_variants
     return candidates
 
 

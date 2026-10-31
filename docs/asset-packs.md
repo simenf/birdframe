@@ -50,7 +50,8 @@ metadata for a BirdFrame pack and does not replace the illustration files.
 
 ## Build a ZIP
 
-After obtaining or preparing a licensed source directory:
+After obtaining or preparing a licensed source directory, build the normal
+BirdFrame/AvianAssets ZIP:
 
 ```sh
 python scripts/create-asset-pack.py \
@@ -63,6 +64,45 @@ The script copies only the collage artwork, compatibility tables, attribution,
 license directories, and a generated `manifest.json`. It does not include Git
 metadata, application code, model files, or unrelated repository files.
 
+AvianAssets remains BirdFrame's canonical catalog. In Settings → Asset Packs,
+BirdFrame can also browse the hosted AvianVisitors official and community
+catalogs. Imported AvianVisitors bundles are installed under an
+`avianvisitors-hosted-`-prefixed ID, preserving BirdFrame's existing pack IDs. The
+installer verifies the catalog manifest and every PNG checksum before making
+the pack available to the collage.
+
+## Export for the AvianVisitors hosted catalog
+
+To prepare one treatment as an upload-ready AvianVisitors bundle ZIP, use the
+same source directory and choose the metadata that describes the art and its
+rights:
+
+```sh
+python scripts/create-asset-pack.py \
+  assets/packs/avianvisitors-germany \
+  dist/germany-watercolor.zip \
+  --format avianvisitors \
+  --id germany-watercolor \
+  --version 1.0.0 \
+  --name "Germany watercolor" \
+  --description "Regional bird illustrations for Germany" \
+  --style-id watercolor \
+  --style-name Watercolor \
+  --coverage-type region \
+  --coverage-label Germany \
+  --region-code DE \
+  --license CC-BY-NC-SA-4.0 \
+  --creator "Original artist or contributor" \
+  --source-url "https://example.org/source" \
+  --treatment illustrations
+```
+
+This mode emits AvianVisitors' `avian-visitors-asset-pack` manifest with
+per-image SHA-256 and byte counts, one artwork treatment, and the selected
+license and attribution. The default mode above continues to emit a BirdFrame
+ZIP for the AvianAssets catalog. Check the source license and creator credits
+before preparing or submitting an export; exporting does not publish it.
+
 Inspect the result before sharing:
 
 ```sh
@@ -72,7 +112,9 @@ sha256sum dist/my-region.zip
 
 ## Manifest
 
-The generated manifest follows the AvianVisitors-compatible format:
+The default generated manifest is BirdFrame's ZIP-package format. It keeps
+familiar AvianVisitors illustration paths, but differs from the newer hosted
+AvianVisitors bundle manifest:
 
 ```json
 {
@@ -86,9 +128,10 @@ The generated manifest follows the AvianVisitors-compatible format:
 ```
 
 Paths are relative to the archive root. A pack may contain only illustrations
-or only sketches. The installer also accepts an unmodified AvianVisitors ZIP
-without a manifest and generates compatible metadata when it finds an
-`illustrations/` directory.
+or only sketches. The installer also accepts an unmodified AvianVisitors
+repository ZIP without a manifest and generates BirdFrame metadata when it
+finds an `illustrations/` directory. Use `--format avianvisitors` above to
+prepare an upload for the hosted catalog.
 
 ## Attribution and licensing
 

@@ -129,6 +129,10 @@ class PackageUrlInstallRequest(BaseModel):
     package_id: str = Field(default="", max_length=128)
 
 
+class AvianVisitorsInstallRequest(BaseModel):
+    id: str = Field(min_length=1, max_length=80, pattern=r"^[a-z0-9][a-z0-9._-]*$")
+
+
 class SourceTestRequest(BaseModel):
     source: Literal["birdweather", "birdweather_public", "birdnet_go"]
     url: str = ""

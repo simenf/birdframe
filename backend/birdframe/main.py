@@ -25,6 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
 from . import __version__
+from .avianvisitors import fetch_avianvisitors_catalog, install_avianvisitors_bundle
 from .adapters import (AdapterError, BirdNETGoClient, BirdWeatherClient, Health, OpenRouterClient,
                        ProviderUnavailable, PublicBirdWeatherClient, SamsungFrameClient, wake_on_lan)
 from .auth import api_key_prefix, generate_api_key, hash_api_key, hash_password
@@ -33,7 +34,7 @@ from .compositor import (SpeciesCount, collage_image, group_detections, journal_
 from .packages import MAX_ARCHIVE_BYTES, PackageError, SAFE_ID, fetch_catalog, install_archive, install_package, install_package_url
 from .schemas import (ApiKeyCreate, ApiKeyCreated, ApiKeyOut, AuthMe, BootstrapRequest, CompositionSummary,
                       Detection, DetectionCreate, JobRequest, LoginRequest, PackageInstallRequest,
-                      PackageUrlInstallRequest, PublicSettings, SettingsResponse, SettingsUpdate,
+                      PackageUrlInstallRequest, AvianVisitorsInstallRequest, PublicSettings, SettingsResponse, SettingsUpdate,
                       SourceTestRequest, UserCreate, UserOut)
 from .storage import Store
 
@@ -874,6 +875,51 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             return await fetch_catalog(url)
         except PackageError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.get("/api/v1/art/avianvisitors/catalog")
+    async def avianvisitors_catalog() -> list[dict[str, object]]:
+        try:
+            entries = await fetch_avianvisitors_catalog()
+        except PackageError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return [{
+            "id": item["id"],
+            "target_id": item["target_id"],
+            "version": item["version"],
+            "name": item["name"],
+            "description": item["description"],
+            "creator": item["creator"],
+            "source": item["source"],
+            "coverage": item["coverage"]["label"],
+            "style": item["style"]["name"],
+            "species_count": item["species_count"] or None,
+            "license": item["license"],
+        } for item in entries]
+
+    @app.post("/api/v1/art/avianvisitors/install", status_code=202)
+    async def avianvisitors_install(payload: AvianVisitorsInstallRequest) -> dict[str, int]:
+        job_id = store.create_job("package_avianvisitors_install", {"bundle_id": payload.id})
+        async def install() -> None:
+            store.update_job(job_id, status="running")
+            service.log("info", f"AvianVisitors bundle install job {job_id} started: {payload.id}")
+            last_report = 0.0
+            def report(fraction: float, phase: str) -> None:
+                nonlocal last_report
+                now = time.monotonic()
+                if fraction < 1.0 and now - last_report < 0.5:
+                    return
+                last_report = now
+                store.update_job(job_id, status="running", result={"phase": phase, "progress": round(fraction, 3)})
+            try:
+                result = await install_avianvisitors_bundle(payload.id, store.art_dir / "packages", progress=report)
+                store.update_job(job_id, status="completed", result={**result, "phase": "done", "progress": 1.0})
+                service.log("info", f"AvianVisitors bundle install job {job_id} completed: {payload.id}")
+                await service.render()
+            except (PackageError, OSError) as exc:
+                store.update_job(job_id, status="failed", error=str(exc))
+                service.log("error", f"AvianVisitors bundle install job {job_id} failed: {exc}")
+        asyncio.create_task(install())
+        return {"id": job_id}
 
     @app.post("/api/v1/art/packages/install", status_code=202)
     async def package_install(payload: PackageInstallRequest) -> dict[str, int]:
