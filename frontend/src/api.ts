@@ -40,7 +40,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(`/api/v1${path}`, { ...init, headers, signal: controller.signal });
     if (!response.ok) {
       let detail = `Request failed (${response.status})`;
-      try { detail = (await response.json()).detail || detail; } catch { /* non-JSON error body */ }
+      try {
+        const body = await response.json();
+        const rawDetail = body.detail;
+        detail = Array.isArray(rawDetail)
+          ? rawDetail.map((item: { msg?: string }) => item.msg).filter(Boolean).join("; ") || detail
+          : typeof rawDetail === "string" ? rawDetail : detail;
+      } catch { /* non-JSON error body */ }
       throw new ApiError(response.status, detail);
     }
     return response.status === 204 ? (undefined as T) : response.json() as Promise<T>;

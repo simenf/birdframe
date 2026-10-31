@@ -10,6 +10,7 @@ dependencies = [
   "pillow>=10.4,<12",
   "cryptography>=43,<46",
   "samsungtvws>=2.7,<4",
+  "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]

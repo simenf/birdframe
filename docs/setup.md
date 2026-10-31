@@ -11,9 +11,10 @@ and users.
 
 1. **Privacy and license.** Confirm the non-commercial licensing notice and
    review the external data flows.
-2. **Location.** Enter/search a location, verify latitude/longitude, choose
-   timezone and language. Location improves regional preparation and local
-   detection filtering.
+2. **Location.** Optionally enter a place label and decimal latitude/longitude
+   (both coordinates are required together), then choose an IANA time zone such
+   as `Europe/Oslo`. Coordinates must be within −90 to 90 latitude and −180 to
+   180 longitude. Location improves regional preparation and species filtering.
 3. **Detection source.** Choose exactly one active source: BirdWeather or
    **Birdnet-GO or Birdframe Birdprovider**. Test the connection before saving it.
 4. **Samsung Frame.** Discover a TV or enter its IP manually, approve pairing

@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class PublicSettings(BaseModel):
-    location_label: str = ""
-    latitude: float | None = None
-    longitude: float | None = None
+    location_label: str = Field(default="", max_length=200)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
     timezone: str = "UTC"
     language: Literal["en", "no"] = "no"
     detection_source: Literal["birdweather", "birdweather_public", "birdnet_go"] = "birdweather_public"
@@ -48,6 +49,28 @@ class PublicSettings(BaseModel):
     occurrence_season: Literal["current", "all_year"] = "current"
     custom_prompt_addendum: str = Field(default="", max_length=4000)
     openrouter_model: str = Field(default="", max_length=250)
+
+    @field_validator("location_label", "timezone", mode="before")
+    @classmethod
+    def strip_location_text(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError("Enter a valid IANA time zone, such as Europe/Oslo or America/New_York") from None
+        return value
+
+    @field_validator("longitude")
+    @classmethod
+    def require_coordinate_pair(cls, value: float | None, info) -> float | None:
+        latitude = info.data.get("latitude")
+        if (latitude is None) != (value is None):
+            raise ValueError("Enter both latitude and longitude, or leave both blank")
+        return value
 
 
 class SettingsUpdate(PublicSettings):
