@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import re
 import shutil
@@ -11,6 +12,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+from PIL import Image
 
 
 class PackageError(RuntimeError):
@@ -49,6 +51,64 @@ def _avianvisitors_manifest(staging: Path, package_id: str) -> dict[str, Any] | 
         if found:
             metadata[table.removesuffix(".json")] = str(found.relative_to(staging))
     (staging / "manifest.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    return metadata
+
+
+def _import_avianvisitors_bundle(staging: Path, package_id: str, raw: bytes) -> dict[str, Any] | None:
+    """Validate a native AvianVisitors ZIP and write BirdFrame package metadata."""
+    try:
+        source_manifest = json.loads(raw)
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise PackageError("Package manifest is invalid JSON") from exc
+    if not isinstance(source_manifest, dict) or source_manifest.get("format") != "avian-visitors-asset-pack":
+        return None
+    from .avianvisitors import _validate_manifest
+
+    source_id = source_manifest.get("id")
+    version = source_manifest.get("version")
+    name = source_manifest.get("name")
+    if not all(isinstance(value, str) for value in (source_id, version, name)):
+        raise PackageError("AvianVisitors manifest is missing bundle identity")
+    validated = _validate_manifest(raw, {
+        "id": source_id,
+        "version": version,
+        "name": name,
+        "source": "official",
+        "manifest": {"sha256": hashlib.sha256(raw).hexdigest()},
+    })
+    for asset in validated["assets"]:
+        image_path = staging / asset["path"]
+        if image_path.is_symlink() or not image_path.is_file():
+            raise PackageError(f"AvianVisitors bundle is missing {asset['path']}")
+        image_data = image_path.read_bytes()
+        if len(image_data) != asset["bytes"] or hashlib.sha256(image_data).hexdigest() != asset["sha256"]:
+            raise PackageError(f"AvianVisitors illustration checksum does not match the manifest: {asset['path']}")
+        try:
+            with Image.open(io.BytesIO(image_data)) as image:
+                if image.format != "PNG" or image.width > 4096 or image.height > 4096 or image.width * image.height > 16_000_000:
+                    raise PackageError(f"AvianVisitors illustration dimensions are invalid: {asset['path']}")
+                image.verify()
+        except PackageError:
+            raise
+        except Exception as exc:
+            raise PackageError(f"AvianVisitors illustration is not a valid PNG: {asset['path']}") from exc
+    preserved_manifest = staging / "LICENSES" / "avianvisitors-manifest.json"
+    preserved_manifest.parent.mkdir(parents=True, exist_ok=True)
+    preserved_manifest.write_bytes(raw)
+    metadata = {
+        "package_id": package_id,
+        "format": "birdframe-avianvisitors-hosted-v1",
+        "source": "local-import",
+        "source_id": validated["id"],
+        "source_format_version": validated["format_version"],
+        "version": validated["version"],
+        "name": validated["name"],
+        "description": validated["description"],
+        "style": validated["style"],
+        "coverage": validated["coverage"],
+        "license": {"spdx": validated["license"]},
+        "attribution": validated["attribution"],
+    }
     return metadata
 
 
@@ -126,9 +186,14 @@ def install_archive(archive: Path, package_id: str, destination: Path, progress:
         if not manifest.exists():
             raise PackageError("Package is missing manifest.json and is not an AvianVisitors illustration bundle")
         try:
-            metadata = json.loads(manifest.read_text())
-        except json.JSONDecodeError as exc:
+            raw_manifest = manifest.read_bytes()
+            metadata = json.loads(raw_manifest)
+        except (ValueError, UnicodeDecodeError) as exc:
             raise PackageError("Package manifest is invalid JSON") from exc
+        if isinstance(metadata, dict) and not metadata.get("package_id"):
+            metadata = _import_avianvisitors_bundle(staging, package_id, raw_manifest) or metadata
+            if metadata.get("package_id"):
+                manifest.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         if not isinstance(metadata, dict) or not metadata.get("package_id"):
             raise PackageError("Package manifest is missing package_id")
         target = destination / package_id

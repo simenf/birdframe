@@ -71,6 +71,11 @@ catalogs. Imported AvianVisitors bundles are installed under an
 installer verifies the catalog manifest and every PNG checksum before making
 the pack available to the collage.
 
+The local ZIP upload also accepts native AvianVisitors bundle ZIPs. BirdFrame
+validates the bundle manifest and each PNG checksum, then stores BirdFrame
+metadata alongside the original AvianVisitors manifest. If a collection is
+split across packs, choose **All installed packs** to search them together.
+
 ## Export for the AvianVisitors hosted catalog
 
 To prepare one treatment as an upload-ready AvianVisitors bundle ZIP, use the
