@@ -693,7 +693,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
 
     @app.get("/api/v1/detections", response_model=list[Detection])
     async def detections(hours: int = 24) -> list[Detection]:
-        return store.recent_detections(max(1, min(hours, 8760)))
+        return store.recent_detections(max(1, min(hours, 8760)), limit=5000)
 
     @app.get("/api/v1/birds/recent")
     async def recent_birds(request: Request) -> list[dict[str, object]]:

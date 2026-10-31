@@ -33,6 +33,7 @@ class PublicSettings(BaseModel):
     output_width: int = Field(default=3840, ge=640, le=7680)
     output_height: int = Field(default=2160, ge=360, le=4320)
     labels_enabled: bool = False
+    collage_handwritten_names_enabled: bool = False
     legend_script_size: Literal["small", "medium", "large"] = "medium"
     collage_style: Literal["classic", "avianvisitors_horizontal", "avianvisitors_exact"] = "classic"
     paper_tone: str = "#f2e4c9"

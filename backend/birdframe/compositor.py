@@ -31,6 +31,9 @@ class Placement:
     image: Image.Image
     x: int
     y: int
+    art_offset_y: int = 0
+    art_width: int | None = None
+    art_height: int | None = None
 
 
 PALETTES = {
@@ -196,6 +199,11 @@ def _mask(asset: Image.Image, scale: int = 8) -> Image.Image:
     alpha = asset.getchannel("A")
     width = max(1, math.ceil(alpha.width / scale))
     height = max(1, math.ceil(alpha.height / scale))
+    if asset.info.get("birdframe_handwritten_name"):
+        # Nearest-neighbour sampling can miss an entire thin pen stroke.
+        # Preserve any ink in each cell so another bird cannot cover the name.
+        mask = alpha.point(lambda value: 255 if value > 32 else 0)
+        return mask.resize((width, height), Image.Resampling.BOX).point(lambda value: 255 if value else 0)
     return alpha.resize((width, height), Image.Resampling.NEAREST).point(lambda value: 255 if value > 32 else 0)
 
 
@@ -298,7 +306,12 @@ def _try_pack_avianvisitors(items: list[tuple[SpeciesCount, Image.Image]], width
         if x < margin or y < margin or x + asset.width > width - margin or y + asset.height > height - margin:
             return None
         place(asset, x, y)
-        placements.append(Placement(species, asset, x, y))
+        placements.append(Placement(
+            species, asset, x, y,
+            int(asset.info.get("birdframe_art_offset_y", 0)),
+            int(asset.info.get("birdframe_art_width", asset.width)),
+            int(asset.info.get("birdframe_art_height", asset.height)),
+        ))
     return placements
 
 
@@ -352,6 +365,110 @@ def _journal_script(size: int) -> ImageFont.ImageFont:
 
 def _localized_name(species: SpeciesCount, locale: str) -> str:
     return localized_species_name(species.scientific_name, species.common_name, locale)
+
+
+def _handwritten_name_asset(asset: Image.Image, name: str, ink: tuple[int, int, int]) -> Image.Image:
+    """Write a name on a gently curving baseline close to the silhouette.
+
+    Each glyph turns with the baseline instead of stretching around abrupt
+    changes in the outline. The lettering is included in the packed mask.
+    """
+    if not name.strip() or asset.width < 48 or asset.height < 48:
+        return asset
+    alpha = asset.getchannel("A")
+    px = alpha.load()
+    active = [x for x in range(asset.width) if any(px[x, y] > 32 for y in range(asset.height))]
+    if len(active) < 32:
+        return asset
+    left, right = active[0], active[-1]
+    active_width = right - left + 1
+    font_size = max(12, min(34, int(math.sqrt(asset.width * asset.height) * 0.14)))
+    font = _journal_script(font_size)
+    measure = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+
+    def label_bounds() -> tuple[tuple[int, int, int, int], int]:
+        bbox = measure.textbbox((0, 0), name, font=font, anchor="ls")
+        width = math.ceil(max(measure.textlength(name, font=font), bbox[2]) - min(0, bbox[0]) + 8)
+        return bbox, width
+
+    bbox, run_width = label_bounds()
+    while run_width > active_width and font_size > 6:
+        font_size -= 1
+        font = _journal_script(font_size)
+        bbox, run_width = label_bounds()
+    if run_width > active_width:
+        return asset
+
+    # Rank short, smooth curves against the outline. A fixed ceiling on both
+    # slope and bow stops a wingtip or feather from throwing letters sideways.
+    top = [next((y for y in range(asset.height) if px[x, y] > 32), asset.height) for x in range(asset.width)]
+    best_start, best_slope, best_bow, best_base = left, 0.0, 0.0, 0.0
+    best_cost = float("inf")
+    step = max(1, font_size // 5)
+    samples = list(range(0, run_width, max(1, font_size // 8))) + [run_width - 1]
+    bow_limit = min(font_size * 0.35, run_width * 0.04)
+    for start in range(left, right - run_width + 2, step):
+        for slope in (-0.35, -0.22, -0.11, 0.0, 0.11, 0.22, 0.35):
+            for bow in (-bow_limit, 0.0, bow_limit):
+                offsets = [slope * (x - run_width / 2) + bow * (1 - (2 * x / run_width - 1) ** 2) for x in samples]
+                clearance = [top[start + x] - offset for x, offset in zip(samples, offsets)]
+                base = min(clearance)
+                cost = sum(clearance) / len(clearance) - base
+                cost += abs(slope) * font_size * 0.12
+                cost += abs(start + run_width / 2 - (left + right) / 2) * 0.04
+                if cost < best_cost:
+                    best_start, best_slope, best_bow, best_base, best_cost = start, slope, bow, base, cost
+
+    # Render each glyph at double resolution, rotate around its own baseline,
+    # and downsample once. This preserves whole letters and smooth ink edges.
+    scale = 2
+    pad_top = font_size * 3 + math.ceil(run_width * 0.4)
+    out = Image.new("RGBA", (asset.width, asset.height + pad_top), (0, 0, 0, 0))
+    hi_font = _journal_script(font_size * scale)
+    hi_measure = ImageDraw.Draw(Image.new("L", (1, 1)))
+    letters = Image.new("RGBA", (out.width * scale, out.height * scale), (0, 0, 0, 0))
+    baseline = pad_top + best_base - max(2, font_size * 0.14) - max(0, bbox[3])
+    text_start = best_start + 4 - min(0, bbox[0])
+    tile_center = font_size * scale * 2
+    for index, char in enumerate(name):
+        if char.isspace():
+            continue
+        before = hi_measure.textlength(name[:index], font=hi_font) / scale
+        after = hi_measure.textlength(name[:index + 1], font=hi_font) / scale
+        x = text_start + (before + after) / 2
+        along = x - best_start
+        delta = along - run_width / 2
+        curve_y = best_slope * delta + best_bow * (1 - (2 * along / run_width - 1) ** 2)
+        tangent = best_slope - 8 * best_bow * delta / (run_width * run_width)
+        tile = Image.new("RGBA", (tile_center * 2, tile_center * 2), (0, 0, 0, 0))
+        ImageDraw.Draw(tile).text((tile_center, tile_center), char, font=hi_font,
+                                  fill=(*ink, 232), anchor="ms")
+        tile = tile.rotate(-math.degrees(math.atan(tangent)), resample=Image.Resampling.BICUBIC)
+        letters.alpha_composite(tile, (round(x * scale) - tile_center,
+                                       round((baseline + curve_y) * scale) - tile_center))
+    letters = letters.resize(out.size, Image.Resampling.LANCZOS)
+    # A rotated descender can protrude below its baseline. Lift the complete
+    # name if necessary, keeping a small gap without distorting the writing.
+    bird_mask = Image.new("L", out.size, 0)
+    bird_mask.paste(alpha, (0, pad_top))
+    bird_mask = bird_mask.point(lambda value: 255 if value > 32 else 0).filter(ImageFilter.MaxFilter(5))
+    while ImageChops.multiply(letters.getchannel("A"), bird_mask).getbbox():
+        shifted = Image.new("RGBA", out.size, (0, 0, 0, 0))
+        shifted.paste(letters, (0, -1))
+        letters = shifted
+    out.alpha_composite(asset, (0, pad_top))
+    out.alpha_composite(letters)
+    # Discard unused padding without changing the bird's placement metadata.
+    bounds = out.getchannel("A").getbbox()
+    crop_top = min(pad_top, max(0, bounds[1] - max(2, font_size // 4))) if bounds else 0
+    if crop_top:
+        out = out.crop((0, crop_top, out.width, out.height))
+        pad_top -= crop_top
+    out.info["birdframe_art_offset_y"] = pad_top
+    out.info["birdframe_art_width"] = asset.width
+    out.info["birdframe_art_height"] = asset.height
+    out.info["birdframe_handwritten_name"] = True
+    return out
 
 
 def _draw_tracked(draw: ImageDraw.ImageDraw, centre_x: float, y: float, text: str,
@@ -469,11 +586,11 @@ def journal_image(species: list[SpeciesCount], settings: PublicSettings, art_dir
 
 
 def _draw_number(draw: ImageDraw.ImageDraw, x: int, y: int, number: int, paper: tuple[int, int, int], ink: tuple[int, int, int], radius: int = 27) -> None:
-    draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=paper, outline=ink, width=3)
+    draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=paper, outline=ink, width=max(1, round(radius * 0.075)))
     text = str(number)
-    font = _font(max(18, int(radius * 1.1)))
-    box = draw.textbbox((0, 0), text, font=font)
-    draw.text((x - (box[2] - box[0]) / 2, y - (box[3] - box[1]) / 2 - 2), text, fill=ink, font=font)
+    font = _journal_font(max(6, int(radius * 1.15)))
+    box = draw.textbbox((0, 0), text, font=font, anchor="lt")
+    draw.text((x - (box[2] - box[0]) / 2, y - (box[3] - box[1]) / 2), text, fill=ink, font=font, anchor="lt")
 
 
 def _marker_position(placement: Placement, birds: Image.Image, markers: Image.Image, width: int, height: int, margin: int, radius: int) -> tuple[int, int, int, int] | None:
@@ -518,21 +635,40 @@ def _marker_position(placement: Placement, birds: Image.Image, markers: Image.Im
 def _draw_legend(canvas: Image.Image, placements: list[Placement], start_x: int, paper: tuple[int, int, int], ink: tuple[int, int, int], script_size: str, locale: str) -> None:
     draw = ImageDraw.Draw(canvas)
     width, height = canvas.size
-    draw.line((start_x, 88, start_x, height - 88), fill=ink, width=2)
     scale = {"small": 0.82, "medium": 1.0, "large": 1.22}[script_size]
-    available = height - 205
-    row_height = max(32, min(int(104 * scale), available // max(1, len(placements))))
-    # Fit the pen-script to the row rather than allowing lower legend entries
-    # to run off a 16:9 panel on a busy day.
-    fitted_scale = min(scale, row_height / 62)
-    title_font = _script_font(int(42 * min(scale, 1.0)))
-    name_font, latin_font = _script_font(max(13, int(33 * fitted_scale))), _font(max(11, int(22 * fitted_scale)), italic=True)
-    draw.text((start_x + 42, 94), "Dagens fugler", fill=ink, font=title_font)
+    inset = max(4, round(height * 0.04))
+    draw.line((start_x, inset, start_x, height - inset), fill=ink, width=max(1, round(height * 0.001)))
+    left = start_x + max(8, round(height * 0.022))
+    title_size = max(8, round(height * 0.033 * min(scale, 1.1)))
+    title_font = _journal_script(title_size)
+    draw.text((left, inset), "Dagens fugler" if locale == "no" else "Today's birds", fill=ink, font=title_font, anchor="lt")
+    rows_top = inset + round(height * 0.075)
+    rows_bottom = height - inset
+    row_height = min(height * 0.095, (rows_bottom - rows_top) / max(1, len(placements)))
+    radius = max(3, round(min(height * 0.022, row_height * 0.23)))
+    number_x = left + radius
+    text_x = number_x + radius + max(6, round(height * 0.015))
+    text_width = max(1, width - text_x - max(6, round(height * 0.025)))
+    name_size = max(6, round(min(height * 0.033 * scale, row_height * 0.38)))
+    latin_size = max(5, round(min(height * 0.019 * scale, row_height * 0.23)))
+
+    def fit_font(text: str, size: int, *, script: bool = False) -> ImageFont.ImageFont:
+        make_font = _journal_script if script else lambda pixels: _journal_font(pixels, italic=True)
+        font = make_font(size)
+        while size > 5 and draw.textlength(text, font=font) > text_width:
+            size -= 1
+            font = make_font(size)
+        return font
+
     for number, placement in enumerate(placements, start=1):
-        y = 174 + (number - 1) * row_height
-        _draw_number(draw, start_x + 62, y + 22, number, paper, ink)
-        draw.text((start_x + 106, y), _localized_name(placement.species, locale), fill=ink, font=name_font)
-        draw.text((start_x + 106, y + 34), placement.species.scientific_name or placement.species.common_name, fill=ink, font=latin_font)
+        y = round(rows_top + (number - 0.5) * row_height)
+        _draw_number(draw, number_x, y, number, paper, ink, radius)
+        name = _localized_name(placement.species, locale)
+        latin = placement.species.scientific_name or placement.species.common_name
+        draw.text((text_x, y - row_height * 0.34), name, fill=ink,
+                  font=fit_font(name, name_size, script=True), anchor="lt")
+        draw.text((text_x, y + row_height * 0.08), latin, fill=ink,
+                  font=fit_font(latin, latin_size), anchor="lt")
 
 
 def collage_image(species: list[SpeciesCount], settings: PublicSettings, art_dir: Path) -> tuple[Image.Image, list[dict[str, object]]]:
@@ -546,6 +682,7 @@ def collage_image(species: list[SpeciesCount], settings: PublicSettings, art_dir
     paper = _hex_rgb(settings.paper_tone)
     avian_style = settings.collage_style == "avianvisitors_horizontal"
     avian_exact = settings.collage_style == "avianvisitors_exact"
+    handwritten_names = avian_exact and settings.collage_handwritten_names_enabled
     legend_width = int(width * (0.26 if avian_style else 0.28)) if settings.labels_enabled else 0
     art_width = width - legend_width
     density = {"sparse": 0.52, "standard": 0.68, "full": 0.80}[settings.collage_density]
@@ -561,6 +698,8 @@ def collage_image(species: list[SpeciesCount], settings: PublicSettings, art_dir
     # by drawing it across feathers or a face.
     if settings.labels_enabled:
         density *= 0.78
+    if handwritten_names:
+        density *= 0.78
     area_budget = art_width * height * density
     seed = int(hashlib.sha256("|".join(item.common_name for item in species).encode()).hexdigest()[:16], 16)
     prepared: list[tuple[SpeciesCount, Image.Image]] = []
@@ -574,7 +713,10 @@ def collage_image(species: list[SpeciesCount], settings: PublicSettings, art_dir
         if avian_exact:
             minimum = art_width * height * (0.010 if len(species) <= 8 else 0.0075 if len(species) <= 20 else 0.0055)
             area = max(minimum, area)
-        prepared.append((item, _resize_for_area(asset, area)) )
+        asset = _resize_for_area(asset, area)
+        if handwritten_names:
+            asset = _handwritten_name_asset(asset, _localized_name(item, settings.language), ink)
+        prepared.append((item, asset))
     prepared.sort(key=lambda pair: pair[1].width * pair[1].height, reverse=True)
     margin = max(36, int(min(width, height) * 0.035))
     header_height = int(height * 0.085) if avian_style else 0
@@ -582,11 +724,18 @@ def collage_image(species: list[SpeciesCount], settings: PublicSettings, art_dir
     for shrink in range(10):
         factor = 0.93 ** shrink
         scaled = [(item, asset.resize((max(1, int(asset.width * factor)), max(1, int(asset.height * factor))), Image.Resampling.LANCZOS)) for item, asset in prepared]
+        for (_, original), (_, image) in zip(prepared, scaled):
+            if original.info.get("birdframe_handwritten_name"):
+                image.info["birdframe_art_offset_y"] = round(original.info["birdframe_art_offset_y"] * image.height / original.height)
+                image.info["birdframe_art_width"] = round(original.info["birdframe_art_width"] * image.width / original.width)
+                image.info["birdframe_art_height"] = round(original.info["birdframe_art_height"] * image.height / original.height)
         pack = _try_pack_avianvisitors if avian_exact else _try_pack
         placements = pack(scaled, art_width, height - header_height, margin, seed)
         if placements:
             if header_height:
-                placements = [Placement(item.species, item.image, item.x, item.y + header_height) for item in placements]
+                placements = [Placement(item.species, item.image, item.x, item.y + header_height,
+                                        item.art_offset_y, item.art_width, item.art_height)
+                              for item in placements]
             break
     if not placements:
         # a guaranteed, bounded fallback keeps an art image available even for huge species lists
@@ -594,9 +743,18 @@ def collage_image(species: list[SpeciesCount], settings: PublicSettings, art_dir
         for index, (item, asset) in enumerate(prepared[:12]):
             scale = min(0.35, 0.75 / math.sqrt(len(prepared[:12])))
             image = asset.resize((int(asset.width * scale), int(asset.height * scale)), Image.Resampling.LANCZOS)
+            if "birdframe_art_offset_y" in asset.info:
+                image.info["birdframe_art_offset_y"] = round(int(asset.info["birdframe_art_offset_y"]) * scale)
+                image.info["birdframe_art_width"] = round(int(asset.info["birdframe_art_width"]) * scale)
+                image.info["birdframe_art_height"] = round(int(asset.info["birdframe_art_height"]) * scale)
             x = margin + (index % 4) * (art_width - 2 * margin) // 4 + 24
             y = header_height + margin + (index // 4) * (height - header_height - 2 * margin) // 3 + 24
-            placements.append(Placement(item, image, x, y))
+            placements.append(Placement(
+                item, image, x, y,
+                int(image.info.get("birdframe_art_offset_y", 0)),
+                int(image.info.get("birdframe_art_width", image.width)),
+                int(image.info.get("birdframe_art_height", image.height)),
+            ))
     if avian_style:
         draw = ImageDraw.Draw(canvas)
         inset = max(24, min(width, height) // 60)
@@ -614,7 +772,9 @@ def collage_image(species: list[SpeciesCount], settings: PublicSettings, art_dir
         marker_data: list[tuple[int, int, int, int, int]] = []
         # Retry the full set at progressively smaller, still legible sizes.
         # A failed search never falls back to an overlapping marker.
-        for radius in range(max(18, 28 - len(placements) // 6), 16, -2):
+        max_radius = max(8, round(height * 0.018))
+        min_radius = max(4, round(height * 0.009))
+        for radius in range(max_radius, min_radius - 1, -max(1, round(height * 0.0015))):
             marker_occupancy = Image.new("L", (art_width, height), 0)
             candidate_data: list[tuple[int, int, int, int, int]] = []
             for number, placement in enumerate(placements, start=1):
@@ -630,8 +790,10 @@ def collage_image(species: list[SpeciesCount], settings: PublicSettings, art_dir
             _draw_number(draw, marker_x, marker_y, number, paper, ink, radius)
     species_data = [{"common_name": item.species.common_name, "scientific_name": item.species.scientific_name,
                      "count": item.species.count, "confidence": item.species.confidence,
-                     "latest_at": item.species.latest_at, "x": item.x, "y": item.y,
-                     "width": item.image.width, "height": item.image.height} for item in placements]
+                     "latest_at": item.species.latest_at,
+                     "x": item.x, "y": item.y + item.art_offset_y,
+                     "width": item.art_width or item.image.width,
+                     "height": item.art_height or item.image.height} for item in placements]
     if settings.labels_enabled:
         _draw_legend(canvas, placements, art_width, paper, ink, settings.legend_script_size, settings.language)
     return canvas, species_data

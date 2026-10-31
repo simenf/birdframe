@@ -1,8 +1,8 @@
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageChops, ImageDraw
 
-from birdframe.compositor import SpeciesCount, collage_image, load_species_asset
+from birdframe.compositor import SpeciesCount, _draw_number, _handwritten_name_asset, collage_image, load_species_asset
 from birdframe.packages import _avianvisitors_manifest
 from birdframe.schemas import PublicSettings
 
@@ -54,3 +54,28 @@ def test_avianvisitors_original_layout_renders_a_landscape_collage(tmp_path: Pat
     )
     assert image.size == (640, 360)
     assert len(species) == 3
+
+
+def test_handwritten_label_stays_clear_of_a_steep_silhouette():
+    bird = Image.new("RGBA", (320, 180), (0, 0, 0, 0))
+    ImageDraw.Draw(bird).polygon([(10, 140), (80, 90), (150, 105), (295, 10), (260, 160)], fill=(70, 100, 130, 255))
+    result = _handwritten_name_asset(bird, "Common Chaffinch", (30, 20, 10))
+    offset = result.info["birdframe_art_offset_y"]
+    assert offset >= 0
+    bird_at_offset = Image.new("RGBA", result.size, (0, 0, 0, 0))
+    bird_at_offset.alpha_composite(bird, (0, offset))
+    difference = ImageChops.difference(result, bird_at_offset).getchannel("A")
+    assert difference.getbbox()  # The name was actually drawn.
+    assert not ImageChops.multiply(difference, bird_at_offset.getchannel("A")).getbbox()
+
+
+def test_marker_number_scales_with_the_circle():
+    for radius in (10, 60):
+        canvas = Image.new("RGB", (radius * 4, radius * 4), "white")
+        _draw_number(ImageDraw.Draw(canvas), radius * 2, radius * 2, 8,
+                     (255, 255, 255), (0, 0, 0), radius)
+        interior = canvas.crop((int(radius * 1.5), int(radius * 1.5),
+                                int(radius * 2.5), int(radius * 2.5))).convert("L")
+        bounds = ImageChops.invert(interior).getbbox()
+        assert bounds is not None
+        assert bounds[3] - bounds[1] >= radius * 0.45
