@@ -152,6 +152,7 @@ Do not lose `data/secret.key`: encrypted tokens cannot be recovered without it.
 - [Localization and Norwegian names](docs/localization.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Development](docs/development.md)
+- [Publishing Docker images](docs/docker-release.md)
 
 ## Publishing and licensing
 Source code and original

@@ -88,15 +88,19 @@ For the bundled Norwegian name database and its refresh procedure, see
 ## Upgrading
 
 1. Back up `data/` and, for microphone installations, `birdnet-go-data/`.
-2. Read the release notes and update the explicitly pinned image tags in `.env`.
-3. Pull and recreate containers:
+2. Read the release notes and set `BIRDFRAME_VERSION` in `.env` to the new
+   published image tag. A pinned installation keeps using its old version until
+   this value changes.
+3. Pull the image and recreate the BirdFrame container:
 
    ```sh
-   docker compose pull
-   docker compose --profile local-audio up -d
+   docker compose pull birdframe
+   docker compose up -d birdframe
    ```
 
-4. Confirm `docker compose ps` is healthy and inspect the dashboard.
+4. Confirm `docker compose ps` is healthy and inspect the dashboard. If using
+   the optional local microphone profile and updating BirdNET-Go as well,
+   follow its release notes and use `docker compose --profile local-audio up -d`.
 
 Never run `docker compose down -v` for an upgrade: the `-v` flag removes named
 volumes. This project uses bind mounts, but avoiding it keeps the intent clear.

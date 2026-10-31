@@ -54,7 +54,7 @@ detection adapters and use a fake Samsung Art Mode server for failure paths.
 ## Release checklist
 
 1. Update version metadata, changelog/release notes, and pin image digests/tags.
-2. Build/test AMD64 and ARM64 images in CI.
+2. Build and test AMD64 and ARM64 images; use CI when available.
 3. Produce dependency notices from locked dependencies and update
    `THIRD_PARTY_NOTICES.md`.
 4. Test a clean BirdWeather install and an optional native-Linux microphone
@@ -69,5 +69,6 @@ generated artwork to git. Keep implementation changes independently inspired by
 AvianVisitors; do not copy its code/assets without a separate license review.
 
 GitHub Actions runs the backend test suite and frontend production build for
-every push and pull request. Docker image publishing is intentionally not
-automatic until a maintainer selects a registry and release policy.
+every push and pull request. Docker images are not built or published
+automatically. See [Publishing a Docker image](docker-release.md) for the
+manual multi-platform build, GHCR publication, and promotion steps.
