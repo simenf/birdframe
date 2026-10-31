@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+## 0.2.0
+
+* Browse and install official and community AvianVisitors hosted bundles, and
+  import or export native bundle ZIPs. Existing BirdFrame ZIP packs and the
+  AvianAssets catalog remain supported.
+* Choose artwork background and font colors, add curved handwritten bird names
+  to the Avian Visitors original collage, and use clearer numbered legends.
+* Added a statistics view, stamp and cutout atlas styles, and system, light,
+  and dark appearance options.
+* Improved setup routing and location validation.
+* Documented the manual multi-platform Docker publishing and upgrade process.
+
+## 0.1.2
+
+* Hardened BirdNET-Go SSE monitoring with heartbeat-aware timeouts, automatic
+  worker recovery, source runtime status, and stream-aware connection tests.
+* Detection records and activity logs are preserved when artwork rendering
+  fails, so a display problem cannot stop source ingestion.
+
+### Earlier features included in 0.1.2
+
 * Norwegian bird names are bundled from the Norwegian Bird Names Committee's
   AviList workbook and can be refreshed with the localization importer.
 * Added selectable illustration/sketch packs, paginated activity logs, and the
@@ -24,13 +45,6 @@
 * Moved collage style and display/TV controls into the Setup guide as Artwork
   and Display & TV wizard steps; Settings now covers artwork generation, the
   display API, and asset packs.
-
-## 0.1.2
-
-* Hardened BirdNET-Go SSE monitoring with heartbeat-aware timeouts, automatic
-  worker recovery, source runtime status, and stream-aware connection tests.
-* Detection records and activity logs are preserved when artwork rendering
-  fails, so a display problem cannot stop source ingestion.
 
 ## 0.1.1
 

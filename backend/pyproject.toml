@@ -1,6 +1,6 @@
 [project]
 name = "birdframe"
-version = "0.1.2"
+version = "0.2.0"
 description = "Self-hosted bird detection artwork display for Samsung The Frame"
 requires-python = ">=3.12"
 dependencies = [

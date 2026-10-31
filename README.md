@@ -81,19 +81,19 @@ in with a username and password.
 Once the service is running, the quickest way to get beautiful artwork is to add an openrouter api key and generate images, or through the
 official BirdFrame asset catalog — no source build or manual downloads needed:
 
-1. Open **Settings → Asset Packs**.
+1. Open **Setup → Assets**.
 2. Set the **Catalog URL** to:
 
    ```text
    https://avianassets.simenf.com/catalog.json
    ```
 
-3. Click **Save catalog URL**, then **Load catalog packages**.
-4. Pick a regional pack and click **Install**. The catalog currently ships
-   Germany, Switzerland, and Western US packs, each with hundreds of full-color
-   illustrations plus pencil sketches.
+3. Click **Load AvianAssets packages** to save the URL and load the catalog.
+4. Pick a pack and click **Install**. The catalog includes Germany, Switzerland,
+   Western US, and the Fugleramme classic illustration collection.
 
-You can also install from any other compatible HTTPS
+You can also browse official and community AvianVisitors hosted bundles from the
+Assets pane, install from any other compatible HTTPS
 catalog, or drop ZIPs into the persistent `data/art/packages` directory — see
 [docs/artwork.md](docs/artwork.md).
 
