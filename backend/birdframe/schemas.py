@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Literal
 
@@ -35,6 +36,7 @@ class PublicSettings(BaseModel):
     legend_script_size: Literal["small", "medium", "large"] = "medium"
     collage_style: Literal["classic", "avianvisitors_horizontal", "avianvisitors_exact"] = "classic"
     paper_tone: str = "#f2e4c9"
+    font_tone: str = "#4a3929"
     palette: Literal["classic", "muted", "vivid"] = "classic"
     collage_density: Literal["sparse", "standard", "full"] = "standard"
     pose_preference: Literal["balanced", "perched", "flight"] = "balanced"
@@ -63,6 +65,14 @@ class PublicSettings(BaseModel):
         except (ZoneInfoNotFoundError, ValueError):
             raise ValueError("Enter a valid IANA time zone, such as Europe/Oslo or America/New_York") from None
         return value
+
+    @field_validator("paper_tone", "font_tone")
+    @classmethod
+    def validate_artwork_color(cls, value: str) -> str:
+        value = value.strip()
+        if re.fullmatch(r"#[0-9a-fA-F]{6}", value) is None:
+            raise ValueError("Choose a six-digit hex color such as #f2e4c9")
+        return value.lower()
 
     @field_validator("longitude")
     @classmethod

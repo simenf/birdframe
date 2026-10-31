@@ -308,7 +308,9 @@ class BirdFrameService:
                     with Image.open(__import__("io").BytesIO(response.content)) as source:
                         asset = source.convert("RGBA")
                     if asset.getchannel("A").getextrema()[0] == 255:
-                        asset = remove_paper_background(asset, settings.paper_tone)
+                        # Generated bird images use the fixed cream ground in style_prompt;
+                        # keep its chroma key independent from the user's composition color.
+                        asset = remove_paper_background(asset)
                     pose_name = "flight" if requested_pose.startswith("in flight") else "perched"
                     asset.save(target / f"{pose_name}.png", "PNG", optimize=True)
                     generated.append(f"{common}:{pose_name}")
