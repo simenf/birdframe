@@ -313,3 +313,70 @@ async def test_birdnet_worker_logs_detection_before_render_failure(tmp_path: Pat
     assert any("First bird (0.910)" in message for message in messages)
     assert any("artwork update failed after First bird" in message for message in messages)
     assert any("Second bird" in message for message in messages)
+
+
+def _install_fake_pack(tmp_path: Path, pack_id: str) -> Path:
+    from PIL import Image
+
+    illustrations = tmp_path / "art" / "packages" / pack_id / "illustrations"
+    illustrations.mkdir(parents=True)
+    Image.new("RGBA", (16, 16), (12, 34, 56, 255)).save(illustrations / "pica-pica.png")
+    return illustrations.parent
+
+
+def test_removing_a_pack_deletes_it_and_drops_its_artwork(tmp_path: Path):
+    app = create_app(tmp_path)
+    with TestClient(app) as client:
+        authed(client)
+        pack = _install_fake_pack(tmp_path, "regional-pack")
+        _install_fake_pack(tmp_path, "other-pack")
+        assert client.post("/api/v1/detections", json={
+            "common_name": "Eurasian Magpie", "scientific_name": "Pica pica",
+            "source_type": "manual", "source_event_id": "magpie",
+        }).status_code == 201
+
+        response = client.delete("/api/v1/art/packs/regional-pack")
+        assert response.status_code == 200, response.text
+        assert response.json() == {"id": "regional-pack", "removed": True, "selection_reset": False}
+        assert not pack.exists()
+        assert [item["id"] for item in client.get("/api/v1/art/packs").json()] == ["other-pack"]
+        assert not any(path.name.startswith(".") for path in (tmp_path / "art" / "packages").iterdir())
+
+        assert client.delete("/api/v1/art/packs/other-pack").status_code == 200
+        assert client.get("/api/v1/birds/recent").json()[0]["has_artwork"] is False
+
+
+def test_removing_the_selected_pack_falls_back_to_all_packs(tmp_path: Path):
+    app = create_app(tmp_path)
+    with TestClient(app) as client:
+        authed(client)
+        _install_fake_pack(tmp_path, "regional-pack")
+        settings = client.get("/api/v1/settings").json()
+        assert client.put("/api/v1/settings", json={**settings, "asset_pack_id": "regional-pack"}).status_code == 200
+
+        response = client.delete("/api/v1/art/packs/regional-pack")
+        assert response.json()["selection_reset"] is True
+        assert client.get("/api/v1/settings").json()["asset_pack_id"] == "all"
+
+
+def test_removing_a_pack_rejects_missing_and_unsafe_ids(tmp_path: Path):
+    app = create_app(tmp_path)
+    with TestClient(app) as client:
+        authed(client)
+        (tmp_path / "art" / "packages").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "art" / "outside").mkdir(parents=True, exist_ok=True)
+        assert client.delete("/api/v1/art/packs/not-installed").status_code == 404
+        assert client.delete("/api/v1/art/packs/..").status_code in (400, 404)
+        assert client.delete("/api/v1/art/packs/%2E%2E%2Foutside").status_code in (400, 404)
+        assert client.delete("/api/v1/art/packs/Bad%20Id").status_code == 400
+        assert (tmp_path / "art" / "outside").exists()
+
+
+def test_removing_a_pack_requires_an_api_key(tmp_path: Path):
+    app = create_app(tmp_path)
+    with TestClient(app) as client:
+        authed(client)
+        pack = _install_fake_pack(tmp_path, "regional-pack")
+        client.headers.pop("Authorization")
+        assert client.delete("/api/v1/art/packs/regional-pack").status_code == 401
+        assert pack.exists()

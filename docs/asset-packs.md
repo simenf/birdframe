@@ -192,13 +192,20 @@ In Settings, use **Asset packs** to:
 
 - upload a local ZIP;
 - install a direct HTTPS ZIP URL;
-- save and load a catalog; and
-- install a catalog entry.
+- save and load a catalog;
+- install a catalog entry; and
+- remove an installed pack.
 
 Installation is asynchronous. Follow the job in **Activity log**, then select
 the pack and treatment under **Collage style**. For a source build, placing a
 pack under `assets/packs/` causes Docker to seed it into `/data/art/packages`
 on first startup; mapped data is never overwritten on later restarts.
+
+**Remove** under **Installed packs** deletes that pack's folder from
+`/data/art/packages` and re-renders the collage. If it was the selected pack,
+the selection falls back to **All installed packs**. The same action is
+available as `DELETE /api/v1/art/packs/<id>`. Reinstall a removed pack from its
+catalog, URL, or ZIP.
 
 Before publishing, test both treatments, a species with two poses, a species
 with no matching asset, and a full-screen 16:9 composition. Run the automated

@@ -31,7 +31,7 @@ from .adapters import (AdapterError, BirdNETGoClient, BirdWeatherClient, Health,
 from .auth import api_key_prefix, generate_api_key, hash_api_key, hash_password
 from .compositor import (SpeciesCount, collage_image, group_detections, journal_image,
                          latest_visitor_image, load_species_asset, species_has_asset)
-from .packages import MAX_ARCHIVE_BYTES, PackageError, SAFE_ID, fetch_catalog, install_archive, install_package, install_package_url
+from .packages import MAX_ARCHIVE_BYTES, PackageError, SAFE_ID, fetch_catalog, install_archive, install_package, install_package_url, remove_package
 from .schemas import (ApiKeyCreate, ApiKeyCreated, ApiKeyOut, AuthMe, BootstrapRequest, CompositionSummary,
                       Detection, DetectionCreate, JobRequest, LoginRequest, PackageInstallRequest,
                       PackageUrlInstallRequest, AvianVisitorsInstallRequest, PublicSettings, SettingsResponse, SettingsUpdate,
@@ -748,6 +748,29 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
                     "sketches": len(list(sketches.glob("*.png"))) if sketches else 0,
                 })
         return result
+
+    @app.delete("/api/v1/art/packs/{pack_id}")
+    async def remove_artwork_pack(pack_id: str) -> dict[str, object]:
+        """Uninstall a pack. If it was the selected pack, fall back to all packs."""
+        if SAFE_ID.fullmatch(pack_id) is None:
+            raise HTTPException(status_code=400, detail="Invalid package id")
+        # Hold the render lock so a collage in progress never loses its art mid-draw.
+        async with service.render_lock:
+            try:
+                detached = remove_package(store.art_dir / "packages", pack_id)
+            except FileNotFoundError:
+                raise HTTPException(status_code=404, detail="Artwork pack is not installed") from None
+            except (PackageError, OSError) as exc:
+                raise HTTPException(status_code=500, detail=f"Could not remove artwork pack: {exc}") from exc
+            settings = store.get_settings()
+            selection_reset = settings.asset_pack_id == pack_id
+            if selection_reset:
+                public = settings.model_dump(include=set(PublicSettings.model_fields))
+                store.save_settings(SettingsUpdate(**{**public, "asset_pack_id": "all"}))
+        await asyncio.to_thread(shutil.rmtree, detached, True)
+        service.log("info", f"Artwork pack removed: {pack_id}" + (" (selection reset to all packs)" if selection_reset else ""))
+        await service.render()
+        return {"id": pack_id, "removed": True, "selection_reset": selection_reset}
 
     @app.post("/api/v1/detections", response_model=Detection, status_code=201)
     async def create_detection(payload: DetectionCreate) -> Detection:

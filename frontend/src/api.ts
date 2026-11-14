@@ -85,6 +85,7 @@ export const api = {
   occurrences: () => request<Array<Omit<AtlasBird, "image_url">>>("/art/occurrences"),
   generateArt: (body: { species: Array<{ common_name: string; scientific_name: string }>; model?: string; poses?: "one" | "both" }) => request<{ id: number }>("/art/generate", { method: "POST", body: JSON.stringify(body) }),
   packs: () => request<Array<{ id: string; illustrations: number; sketches: number }>>("/art/packs"),
+  removePack: (id: string) => request<{ id: string; removed: boolean; selection_reset: boolean }>(`/art/packs/${encodeURIComponent(id)}`, { method: "DELETE" }),
   packageCatalog: () => request<Array<{ id: string; version?: string; download_url: string; sha256: string }>>("/art/packages/catalog"),
   avianVisitorsCatalog: () => request<AvianVisitorsBundle[]>("/art/avianvisitors/catalog"),
   installAvianVisitorsBundle: (id: string) => request<{ id: number }>("/art/avianvisitors/install", { method: "POST", body: JSON.stringify({ id }) }),
