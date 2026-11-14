@@ -2,7 +2,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw
 
-from birdframe.compositor import SpeciesCount, _draw_number, _handwritten_name_asset, collage_image, load_species_asset
+from birdframe.compositor import SpeciesCount, _draw_number, _handwritten_name_asset, collage_image, load_species_asset, species_has_asset
 from birdframe.packages import _avianvisitors_manifest
 from birdframe.schemas import PublicSettings
 
@@ -79,3 +79,49 @@ def test_marker_number_scales_with_the_circle():
         bounds = ImageChops.invert(interior).getbbox()
         assert bounds is not None
         assert bounds[3] - bounds[1] >= radius * 0.45
+
+
+def test_pack_art_is_found_under_an_older_scientific_name(tmp_path: Path):
+    illustrations = tmp_path / "packages" / "western-na" / "illustrations"
+    illustrations.mkdir(parents=True)
+    Image.new("RGBA", (20, 10), (12, 34, 56, 255)).save(illustrations / "accipiter-cooperii.png")
+    Image.new("RGBA", (10, 20), (65, 43, 21, 255)).save(illustrations / "accipiter-cooperii-2.png")
+    species = SpeciesCount("Cooper's Hawk", "Astur cooperii", 1, 1, "")
+
+    assert species_has_asset(tmp_path, species)
+    assert load_species_asset(tmp_path, species, "perched", "classic").size == (20, 10)
+    assert load_species_asset(tmp_path, species, "flight", "classic").size == (10, 20)
+
+
+def test_aliases_work_in_both_directions_and_prefer_the_detected_name(tmp_path: Path):
+    illustrations = tmp_path / "packages" / "mixed" / "illustrations"
+    illustrations.mkdir(parents=True)
+    Image.new("RGBA", (20, 10)).save(illustrations / "hesperiphona-vespertina.png")
+    Image.new("RGBA", (7, 7)).save(illustrations / "coccothraustes-vespertinus.png")
+
+    newer = SpeciesCount("Evening Grosbeak", "Hesperiphona vespertina", 1, 1, "")
+    older = SpeciesCount("Evening Grosbeak", "Coccothraustes vespertinus", 1, 1, "")
+    assert load_species_asset(tmp_path, newer, "perched", "classic").size == (20, 10)
+    assert load_species_asset(tmp_path, older, "perched", "classic").size == (7, 7)
+
+    (illustrations / "coccothraustes-vespertinus.png").unlink()
+    assert load_species_asset(tmp_path, older, "perched", "classic").size == (20, 10)
+
+
+def test_generated_art_beats_pack_art_found_through_an_alias(tmp_path: Path):
+    illustrations = tmp_path / "packages" / "western-na" / "illustrations"
+    illustrations.mkdir(parents=True)
+    Image.new("RGBA", (20, 10)).save(illustrations / "accipiter-cooperii.png")
+    generated = tmp_path / "species" / "astur-cooperii"
+    generated.mkdir(parents=True)
+    Image.new("RGBA", (5, 9)).save(generated / "perched.png")
+    species = SpeciesCount("Cooper's Hawk", "Astur cooperii", 1, 1, "")
+
+    assert load_species_asset(tmp_path, species, "perched", "classic").size == (5, 9)
+
+
+def test_unaliased_species_without_art_still_falls_back(tmp_path: Path):
+    (tmp_path / "packages" / "western-na" / "illustrations").mkdir(parents=True)
+    species = SpeciesCount("Common Swift", "Apus apus", 1, 1, "")
+    assert not species_has_asset(tmp_path, species)
+    assert load_species_asset(tmp_path, species, "perched", "classic").size == (1024, 1024)

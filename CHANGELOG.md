@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+* Find pack artwork for species whose scientific name has changed, such as
+  Cooper's Hawk (*Astur cooperii*, formerly *Accipiter cooperii*) and Evening
+  Grosbeak (*Hesperiphona vespertina*, formerly *Coccothraustes vespertinus*).
+
 ## 0.2.0
 
 * Browse and install official and community AvianVisitors hosted bundles, and
