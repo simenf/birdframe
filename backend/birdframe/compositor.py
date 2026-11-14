@@ -5,6 +5,7 @@ import json
 import math
 import random
 from dataclasses import dataclass
+from functools import lru_cache
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
@@ -67,12 +68,71 @@ def _hex_rgb(value: str) -> tuple[int, int, int]:
     return (242, 228, 201)
 
 
-def _asset_path(art_dir: Path, species: SpeciesCount, pose: str) -> Path:
-    return art_dir / "species" / _species_slug(species) / f"{pose}.png"
+def _slug(name: str) -> str:
+    return "".join(character.lower() if character.isalnum() else "-" for character in name).strip("-")
 
 
 def _species_slug(species: SpeciesCount) -> str:
-    return "".join(character.lower() if character.isalnum() else "-" for character in (species.scientific_name or species.common_name)).strip("-")
+    return _slug(species.scientific_name or species.common_name)
+
+
+@lru_cache(maxsize=1)
+def _alias_groups() -> dict[str, tuple[str, ...]]:
+    """Map each known scientific-name slug to every slug in its synonym group."""
+    path = Path(__file__).parent / "data" / "scientific_name_aliases.json"
+    try:
+        groups = json.loads(path.read_text(encoding="utf-8")).get("groups", [])
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+        return {}
+    lookup: dict[str, tuple[str, ...]] = {}
+    for group in groups:
+        if not isinstance(group, list):
+            continue
+        slugs = tuple(dict.fromkeys(_slug(name) for name in group if isinstance(name, str) and name.strip()))
+        for slug in slugs:
+            lookup[slug] = slugs
+    return lookup
+
+
+def _species_slugs(species: SpeciesCount) -> list[str]:
+    """The species' own slug first, then slugs for older or newer scientific names.
+
+    Taxonomies move faster than artwork packs, so a detection labelled
+    *Astur cooperii* should still find a pack drawn as *Accipiter cooperii*.
+    """
+    primary = _species_slug(species)
+    return [primary, *(slug for slug in _alias_groups().get(primary, ()) if slug != primary)]
+
+
+def _find_species_asset(
+    art_dir: Path, species: SpeciesCount, poses: Iterable[str],
+    package_id: str = "all", asset_variant: str = "illustrations",
+) -> Path | None:
+    """First existing generated or packaged asset for the species, or None.
+
+    Generated art wins over packs; within each, the detection's own
+    scientific name is tried before its aliases.
+    """
+    poses = tuple(poses)
+    slugs = _species_slugs(species)
+    for slug in slugs:
+        for pose in poses:
+            candidate = art_dir / "species" / slug / f"{pose}.png"
+            if candidate.exists():
+                return candidate
+    package_root = art_dir / "packages"
+    if not package_root.exists():
+        return None
+    packages = sorted(package_root.iterdir())
+    if package_id != "all":
+        packages = [package for package in packages if package.name == package_id]
+    for slug in slugs:
+        for package in packages:
+            for pose in poses:
+                for candidate in _packaged_candidates(package, slug, pose, asset_variant):
+                    if candidate.exists():
+                        return candidate
+    return None
 
 
 def _packaged_candidates(package: Path, safe: str, pose: str, asset_variant: str) -> list[Path]:
@@ -144,22 +204,11 @@ def load_species_asset(
     art_dir: Path, species: SpeciesCount, pose: str, palette: str,
     package_id: str = "all", asset_variant: str = "illustrations",
 ) -> Image.Image:
-    candidate = _asset_path(art_dir, species, pose)
-    if candidate.exists():
-        with Image.open(candidate) as asset:
-            return asset.convert("RGBA")
-    safe = _species_slug(species)
-    package_root = art_dir / "packages"
-    if package_root.exists():
-        packages = sorted(package_root.iterdir())
-        if package_id != "all":
-            packages = [package for package in packages if package.name == package_id]
-        for package in packages:
-            for packaged in _packaged_candidates(package, safe, pose, asset_variant):
-                if packaged.exists():
-                    with Image.open(packaged) as asset:
-                        return asset.convert("RGBA")
-    return _demo_bird(species, pose, palette)
+    found = _find_species_asset(art_dir, species, (pose,), package_id, asset_variant)
+    if found is None:
+        return _demo_bird(species, pose, palette)
+    with Image.open(found) as asset:
+        return asset.convert("RGBA")
 
 
 def species_has_asset(
@@ -168,24 +217,11 @@ def species_has_asset(
 ) -> bool:
     """True when a real generated or packaged asset exists for this species.
 
-    Mirrors load_species_asset() so a species is only considered "missing
-    artwork" when BirdFrame would fall back to the demo placeholder.
+    Shares _find_species_asset() with load_species_asset() so a species is
+    only considered "missing artwork" when BirdFrame would fall back to the
+    demo placeholder.
     """
-    if any(_asset_path(art_dir, species, pose).exists() for pose in ("perched", "flight")):
-        return True
-    safe = _species_slug(species)
-    package_root = art_dir / "packages"
-    if not package_root.exists():
-        return False
-    packages = sorted(package_root.iterdir())
-    if package_id != "all":
-        packages = [package for package in packages if package.name == package_id]
-    return any(
-        candidate.exists()
-        for package in packages
-        for pose in ("perched", "flight")
-        for candidate in _packaged_candidates(package, safe, pose, asset_variant)
-    )
+    return _find_species_asset(art_dir, species, ("perched", "flight"), package_id, asset_variant) is not None
 
 
 def _resize_for_area(asset: Image.Image, area: float) -> Image.Image:
