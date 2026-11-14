@@ -6,6 +6,7 @@ import json
 import re
 import shutil
 import tempfile
+import uuid
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -117,6 +118,26 @@ def _https_url(value: str) -> str:
     if parsed.scheme != "https" or not parsed.netloc:
         raise PackageError("Package catalog and downloads must use HTTPS")
     return value
+
+
+def remove_package(destination: Path, package_id: str) -> Path:
+    """Take an installed pack out of use and return its detached folder.
+
+    The pack folder is renamed to a hidden sibling first, so lookups stop
+    seeing it immediately; the caller deletes the returned folder afterwards
+    (that part can be slow for large packs).
+    """
+    if not isinstance(package_id, str) or SAFE_ID.fullmatch(package_id) is None:
+        raise PackageError("Invalid package id")
+    target = destination / package_id
+    if target.is_symlink():
+        target.unlink()
+        return target
+    if not target.is_dir():
+        raise FileNotFoundError(package_id)
+    detached = destination / f".{package_id}.removing-{uuid.uuid4().hex}"
+    target.rename(detached)
+    return detached
 
 
 async def fetch_catalog(url: str) -> list[dict[str, Any]]:

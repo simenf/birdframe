@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+* Remove installed artwork packs from Setup's **Installed packs** list or with
+  `DELETE /api/v1/art/packs/<id>`. Removing the selected pack switches artwork
+  back to all installed packs.
+
 ## 0.2.0
 
 * Browse and install official and community AvianVisitors hosted bundles, and
