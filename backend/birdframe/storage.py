@@ -11,6 +11,7 @@ from typing import Any, Iterator
 from cryptography.fernet import Fernet
 
 from .auth import verify_password
+from .compositor import SpeciesCount
 from .schemas import Detection, DetectionCreate, PublicSettings, SettingsResponse, SettingsUpdate
 
 
@@ -114,14 +115,17 @@ class Store:
             )
 
     def get_settings(self) -> SettingsResponse:
+        with self.connection() as db:
+            return self._read_settings(db)
+
+    def _read_settings(self, db: sqlite3.Connection) -> SettingsResponse:
         values = PublicSettings().model_dump()
         secrets: set[str] = set()
-        with self.connection() as db:
-            for row in db.execute("SELECT key, value, secret FROM settings"):
-                if row["secret"]:
-                    secrets.add(row["key"])
-                elif row["key"] in values:
-                    values[row["key"]] = json.loads(row["value"])
+        for row in db.execute("SELECT key, value, secret FROM settings"):
+            if row["secret"]:
+                secrets.add(row["key"])
+            elif row["key"] in values:
+                values[row["key"]] = json.loads(row["value"])
         return SettingsResponse(
             **values,
             has_openrouter_api_key="openrouter_api_key" in secrets,
@@ -137,7 +141,7 @@ class Store:
         return row is None
 
     def save_settings(self, incoming: SettingsUpdate) -> SettingsResponse:
-        data = incoming.model_dump()
+        data = incoming.model_dump(exclude_unset=True)
         secret_names = {"openrouter_api_key", "birdweather_token", "ebird_api_key", "display_api_token"}
         with self.connection() as db:
             for key, value in data.items():
@@ -147,7 +151,8 @@ class Store:
                         db.execute("INSERT OR REPLACE INTO settings(key,value,secret) VALUES(?,?,1)", (key, encrypted))
                 else:
                     db.execute("INSERT OR REPLACE INTO settings(key,value,secret) VALUES(?,?,0)", (key, json.dumps(value)))
-        return self.get_settings()
+            # Validate the merged configuration before committing the transaction.
+            return self._read_settings(db)
 
     def secret(self, key: str) -> str | None:
         with self.connection() as db:
@@ -172,6 +177,22 @@ class Store:
         data = payload.model_dump()
         data["detected_at"] = occurred
         return Detection(**data, id=identifier, created_at=created)
+
+    def observed_species(self, min_confidence: float) -> list[SpeciesCount]:
+        with self.connection() as db:
+            rows = db.execute("""
+                SELECT common_name, scientific_name, count, confidence, detected_at AS latest_at
+                FROM (
+                    SELECT common_name, scientific_name, detected_at,
+                           COUNT(*) OVER species AS count, MAX(confidence) OVER species AS confidence,
+                           ROW_NUMBER() OVER (species ORDER BY detected_at DESC, id DESC) AS recency
+                    FROM detections WHERE confidence >= ?
+                    WINDOW species AS (PARTITION BY COALESCE(NULLIF(scientific_name, ''), common_name))
+                )
+                WHERE recency = 1
+                ORDER BY count DESC, common_name COLLATE NOCASE, scientific_name
+            """, (min_confidence,)).fetchall()
+        return [SpeciesCount(**row) for row in rows]
 
     def recent_detections(self, hours: int, limit: int = 500, min_confidence: float = 0.0) -> list[Detection]:
         cutoff = datetime.now(UTC).timestamp() - hours * 3600

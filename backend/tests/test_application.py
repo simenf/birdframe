@@ -124,6 +124,63 @@ def test_occurrences_report_which_species_are_missing_artwork(tmp_path: Path):
         }
 
 
+def test_observed_birds_include_rare_species_across_stored_history(tmp_path: Path):
+    from PIL import Image
+
+    app = create_app(tmp_path)
+    with TestClient(app) as client:
+        authed(client)
+        store = app.state.store
+        store.save_settings(SettingsUpdate(occurrence_max_species=1, occurrence_threshold=1))
+        old = (datetime.now(UTC) - timedelta(days=400)).isoformat()
+        now = datetime.now(UTC).isoformat()
+        with store.connection() as db:
+            insert = """INSERT INTO detections
+                (source_type,source_event_id,common_name,scientific_name,confidence,detected_at,created_at)
+                VALUES ('manual',?,?,?,?,?,?)"""
+            db.executemany(insert, (
+                (str(i), "Magpie", "Pica pica", 0.9, now, now) for i in range(5001)
+            ))
+            db.executemany(insert, [
+                ("swift", "Swift", "", 0.8, old, old),
+                ("old-name", "Eurasian Magpie", "Pica pica", 1, old, old),
+                ("low", "Ignored", "", 0.7, now, now),
+            ])
+        artwork = store.art_dir / "species" / "pica-pica"
+        artwork.mkdir(parents=True)
+        Image.new("RGBA", (8, 8)).save(artwork / "perched.png")
+        observed = client.get("/api/v1/birds/observed").json()
+        assert [(bird["common_name"], bird["detections"], bird["has_artwork"]) for bird in observed] == [
+            ("Magpie", 5002, True), ("Swift", 1, False),
+        ]
+        swift = store.art_dir / "species" / "swift"
+        swift.mkdir()
+        Image.new("RGBA", (8, 8)).save(swift / "perched.png")
+        assert all(bird["has_artwork"] for bird in client.get("/api/v1/birds/observed").json())
+
+
+def test_partial_settings_save_preserves_omissions_and_validates_merged_values(tmp_path: Path):
+    with TestClient(create_app(tmp_path)) as client:
+        authed(client)
+        settings = "/api/v1/settings"
+        assert client.put(settings, json={
+            "occurrence_threshold": 0, "display_api_require_token": True,
+            "display_api_token": "test-display-token", "latitude": 60, "longitude": 10,
+            "output_width": 640, "output_height": 360,
+        }).status_code == 200
+        saved = client.put(settings, json={"location_label": "Garden", "longitude": 11})
+        assert saved.status_code == 200
+        values = saved.json()
+        assert values["occurrence_threshold"] == 0
+        assert values["display_api_require_token"] and values["has_display_api_token"]
+        assert (values["latitude"], values["longitude"]) == (60, 11)
+        assert client.put(settings, json={"location_label": "Rollback", "latitude": None}).status_code == 422
+        assert client.get(settings).json() == values
+        cleared = client.put(settings, json={"latitude": None, "longitude": None})
+        assert cleared.status_code == 200
+        assert cleared.json()["latitude"] is None and cleared.json()["longitude"] is None
+
+
 def test_journal_display_mode_renders_a_journal_page(tmp_path: Path):
     app = create_app(tmp_path)
     with TestClient(app) as client:

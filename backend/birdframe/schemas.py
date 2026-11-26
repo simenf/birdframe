@@ -5,10 +5,10 @@ import re
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
-class PublicSettings(BaseModel):
+class SettingsFields(BaseModel):
     location_label: str = Field(default="", max_length=200)
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
@@ -75,16 +75,16 @@ class PublicSettings(BaseModel):
             raise ValueError("Choose a six-digit hex color such as #f2e4c9")
         return value.lower()
 
-    @field_validator("longitude")
-    @classmethod
-    def require_coordinate_pair(cls, value: float | None, info) -> float | None:
-        latitude = info.data.get("latitude")
-        if (latitude is None) != (value is None):
+
+class PublicSettings(SettingsFields):
+    @model_validator(mode="after")
+    def require_coordinate_pair(self) -> PublicSettings:
+        if (self.latitude is None) != (self.longitude is None):
             raise ValueError("Enter both latitude and longitude, or leave both blank")
-        return value
+        return self
 
 
-class SettingsUpdate(PublicSettings):
+class SettingsUpdate(SettingsFields):
     openrouter_api_key: str | None = Field(default=None, min_length=1)
     birdweather_token: str | None = Field(default=None, min_length=1)
     ebird_api_key: str | None = Field(default=None, min_length=1)

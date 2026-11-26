@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
+from pydantic import ValidationError
 
 from . import __version__
 from .avianvisitors import fetch_avianvisitors_catalog, install_avianvisitors_bundle
@@ -686,7 +687,10 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
 
     @app.put("/api/v1/settings", response_model=SettingsResponse)
     async def put_settings(payload: SettingsUpdate) -> SettingsResponse:
-        result = store.save_settings(payload)
+        try:
+            result = store.save_settings(payload)
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()[0]["msg"]) from exc
         service.log("info", f"Settings saved; active source is {result.detection_source}")
         await service.render()
         return result
@@ -716,6 +720,16 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             }
             for item in group_detections(store.recent_detections(24, limit=5000, min_confidence=settings.confidence_threshold))
         ]
+
+    @app.get("/api/v1/birds/observed")
+    def observed_birds() -> list[dict[str, object]]:
+        settings = store.get_settings()
+        return [{
+            "common_name": item.common_name,
+            "scientific_name": item.scientific_name,
+            "detections": item.count,
+            "has_artwork": species_has_asset(store.art_dir, item, settings.asset_pack_id, settings.asset_variant),
+        } for item in store.observed_species(settings.confidence_threshold)]
 
     @app.get("/api/v1/birds/image.png")
     async def bird_image(common_name: str, scientific_name: str = "") -> Response:
