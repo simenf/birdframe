@@ -103,15 +103,97 @@ function StatsPage() {
 }
 function StatusCard({ label, value, detail, state }: { label: string; value: string; detail: string; state: string }) { return <article className="status-card"><div className="status-line"><span className={`status-dot ${state === "healthy" ? "good" : "warn"}`}></span><span>{label}</span></div><strong>{value}</strong><p>{detail}</p></article> }
 function BirdRow({ bird, compact = false, action }: { bird: RecentBird; compact?: boolean; action?: ReactNode }) { const when = useMemo(() => new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(bird.latest_at)), [bird.latest_at]); return <div className={`detection bird-row ${compact ? "compact" : ""}`}><img className="bird-thumb bird-image" src={bird.image_url} alt="" /><div><strong>{bird.common_name}</strong><p><em>{bird.scientific_name || "Unidentified species"}</em></p></div><div className="detection-meta"><strong>{bird.count} {bird.count === 1 ? "detection" : "detections"}</strong><span>{when}</span></div>{action}</div> }
+function useObservedBirds() {
+  const [birds, setBirds] = useState<AtlasBird[] | null>(null);
+  const [loadError, setLoadError] = useState("");
+  useEffect(() => {
+    let live = true;
+    let timer: number;
+    async function load() {
+      try {
+        const records = await api.observedBirds();
+        if (live) { setBirds(records); setLoadError(""); }
+      } catch {
+        if (live) setLoadError("Could not load detected birds.");
+      } finally {
+        if (live) timer = window.setTimeout(load, 30000);
+      }
+    }
+    void load();
+    return () => { live = false; window.clearTimeout(timer); };
+  }, []);
+  return { birds, loadError };
+}
+
 function BirdsPage() {
-  const [birds, setBirds] = useState<AtlasBird[]>([]); const [loading, setLoading] = useState(true); const [loadError, setLoadError] = useState("");
+  const { birds, loadError } = useObservedBirds();
+  const [missingOnly, setMissingOnly] = useState(false);
+  const [order, setOrder] = useState("most");
   const [style, setStyle] = useState<"stamps" | "cutouts">(() => { try { return localStorage.getItem("birdframe_atlas_style") === "cutouts" ? "cutouts" : "stamps"; } catch { return "stamps"; } });
-  const [pending, setPending] = useState<Record<string, "busy" | "queued">>({}); const [notice, setNotice] = useState("");
-  useEffect(() => { let live = true; const load = async () => { try { const records = await api.occurrences(); if (live) { setBirds(records.map((bird) => ({ ...bird, image_url: `/api/v1/birds/image.png?common_name=${encodeURIComponent(bird.common_name)}&scientific_name=${encodeURIComponent(bird.scientific_name)}` }))); setLoadError(""); } } catch { if (live) setLoadError("Could not load the bird atlas."); } finally { if (live) setLoading(false); } }; void load(); return () => { live = false; }; }, []);
+  const [pending, setPending] = useState<Record<string, "busy" | "queued">>({});
+  const [notice, setNotice] = useState("");
   const chooseStyle = (value: "stamps" | "cutouts") => { setStyle(value); try { localStorage.setItem("birdframe_atlas_style", value); } catch { /* browser storage unavailable */ } };
-  const generate = async (bird: AtlasBird) => { const key = bird.scientific_name || bird.common_name; setPending((current) => ({ ...current, [key]: "busy" })); setNotice(""); try { await api.generateArt({ species: [{ common_name: bird.common_name, scientific_name: bird.scientific_name || "" }], poses: "both" }); setPending((current) => ({ ...current, [key]: "queued" })); } catch (err) { setNotice(`Could not start artwork for ${bird.common_name}: ${err instanceof ApiError ? err.message : "check the OpenRouter setup in Settings."}`); setPending((current) => { const next = { ...current }; delete next[key]; return next; }); } };
-  const missing = birds.filter((bird) => !bird.has_artwork).length;
-  return <section className="panel birds-page"><div className="panel-heading"><div><p className="eyebrow">PAST YEAR · MOST HEARD FIRST</p><h2>Bird atlas</h2><p className="muted">Your recent species, with BirdFrame artwork and detection frequency.</p></div><div className="atlas-tools"><strong>{birds.length} species</strong><div className="segmented atlas-switch" role="group" aria-label="Atlas display style"><button type="button" className={style === "stamps" ? "selected" : ""} aria-pressed={style === "stamps"} onClick={() => chooseStyle("stamps")}>Stamps</button><button type="button" className={style === "cutouts" ? "selected" : ""} aria-pressed={style === "cutouts"} onClick={() => chooseStyle("cutouts")}>Cutouts</button></div></div></div>{loadError && <p className="form-notice">{loadError}</p>}{birds.length ? style === "cutouts" ? <div className="atlas-cutout-list">{birds.map((bird) => <article className="atlas-cutout-row" key={bird.scientific_name || bird.common_name}><img src={bird.image_url} alt={bird.common_name} /><div><strong>{bird.common_name}</strong><p><em>{bird.scientific_name || "Unidentified species"}</em></p></div><span>{bird.detections} detections</span>{!bird.has_artwork && <button type="button" className="button small ghost" disabled={!!pending[bird.scientific_name || bird.common_name]} onClick={() => void generate(bird)}>{pending[bird.scientific_name || bird.common_name] === "busy" ? "Starting…" : pending[bird.scientific_name || bird.common_name] === "queued" ? "Queued ✓" : "Generate image"}</button>}</article>)}</div> : <div className="stamp-grid">{birds.map((bird, index) => <article className="bird-stamp" key={bird.scientific_name || bird.common_name}><div className="stamp-image"><img className="bird-image" src={bird.image_url} alt={bird.common_name} />{!bird.has_artwork && <span className="stamp-missing">Artwork missing</span>}</div><span className="stamp-index">{String(index + 1).padStart(2, "0")}</span><strong>{bird.common_name}</strong><em>{bird.scientific_name || ""}</em><small>{bird.detections} {bird.detections === 1 ? "detection" : "detections"}</small>{!bird.has_artwork && <button type="button" className="button small ghost" disabled={!!pending[bird.scientific_name || bird.common_name]} onClick={() => void generate(bird)}>{pending[bird.scientific_name || bird.common_name] === "busy" ? "Starting…" : pending[bird.scientific_name || bird.common_name] === "queued" ? "Queued ✓" : "Generate artwork"}</button>}</article>)}</div> : loading ? <EmptyState icon="♧" title="Loading atlas" description="Gathering your recorded species." /> : <EmptyState icon="♬" title="No detections yet" description="Species will appear here as BirdFrame hears birds." />}{missing > 0 && <p className="help-text">{missing} {missing === 1 ? "species is" : "species are"} missing artwork — generate one per bird above, or install an asset pack in Settings.</p>}{notice && <p className="form-notice">{notice}</p>}</section> }
+  const generate = async (bird: AtlasBird) => {
+    const key = bird.scientific_name || bird.common_name;
+    setPending((current) => ({ ...current, [key]: "busy" }));
+    setNotice("");
+    try {
+      await api.generateArt({ species: [{ common_name: bird.common_name, scientific_name: bird.scientific_name }], poses: "both" });
+      setPending((current) => ({ ...current, [key]: "queued" }));
+    } catch (err) {
+      setNotice(`Could not start artwork for ${bird.common_name}: ${err instanceof ApiError ? err.message : "check the OpenRouter setup in Settings."}`);
+      setPending((current) => { const next = { ...current }; delete next[key]; return next; });
+    }
+  };
+  const missing = birds?.filter((bird) => !bird.has_artwork) ?? [];
+  const visible = [...(missingOnly ? missing : birds ?? [])].sort((a, b) => {
+    const byCount = order === "most" ? b.detections - a.detections : order === "fewest" ? a.detections - b.detections : 0;
+    return byCount || a.common_name.localeCompare(b.common_name) || a.scientific_name.localeCompare(b.scientific_name);
+  });
+
+  return <section className="panel birds-page">
+    <div className="panel-heading"><h2>Detected species</h2>
+      <div className="segmented atlas-switch" role="group" aria-label="Atlas display style">
+        <button type="button" className={style === "stamps" ? "selected" : ""} aria-pressed={style === "stamps"} onClick={() => chooseStyle("stamps")}>Stamps</button>
+        <button type="button" className={style === "cutouts" ? "selected" : ""} aria-pressed={style === "cutouts"} onClick={() => chooseStyle("cutouts")}>Cutouts</button>
+      </div>
+    </div>
+    <div className="atlas-filters">
+      <div className="segmented" role="group" aria-label="Filter detected species">
+        <button type="button" className={!missingOnly ? "selected" : ""} aria-pressed={!missingOnly} onClick={() => setMissingOnly(false)}>All detected{birds && ` (${birds.length})`}</button>
+        <button type="button" className={missingOnly ? "selected" : ""} aria-pressed={missingOnly} onClick={() => setMissingOnly(true)}>Missing artwork{birds && ` (${missing.length})`}</button>
+      </div>
+      <label className="theme-control">Sort by <select value={order} onChange={(event) => setOrder(event.target.value)}>
+        <option value="most">Most detected</option><option value="fewest">Fewest detections</option><option value="name">Name A–Z</option>
+      </select></label>
+    </div>
+    {loadError && <p className="form-notice">{loadError}</p>}
+    {visible.length > 0 && <div className={style === "cutouts" ? "atlas-cutout-list" : "stamp-grid"}>
+      {visible.map((bird, index) => {
+        const key = bird.scientific_name || bird.common_name;
+        const query = new URLSearchParams({ common_name: bird.common_name, scientific_name: bird.scientific_name, artwork: String(bird.has_artwork) });
+        const image = <img loading="lazy" className="bird-image" src={`/api/v1/birds/image.png?${query}`} alt={bird.common_name} />;
+        const action = !bird.has_artwork && <button type="button" className="button small ghost" disabled={!!pending[key]} onClick={() => void generate(bird)}>
+          {pending[key] === "busy" ? "Starting…" : pending[key] === "queued" ? "Queued ✓" : "Generate artwork"}
+        </button>;
+        if (style === "cutouts") return <article className="atlas-cutout-row" key={key}>{image}
+          <div><strong>{bird.common_name}</strong><p><em>{bird.scientific_name || "Unidentified species"}</em></p></div>
+          <span>{bird.detections} {bird.detections === 1 ? "detection" : "detections"}</span>{action}
+        </article>;
+        return <article className="bird-stamp" key={key}>
+          <div className="stamp-image">{image}{!bird.has_artwork && <span className="stamp-missing">Artwork missing</span>}</div>
+          <span className="stamp-index">{String(index + 1).padStart(2, "0")}</span>
+          <strong>{bird.common_name}</strong><em>{bird.scientific_name || ""}</em>
+          <small>{bird.detections} {bird.detections === 1 ? "detection" : "detections"}</small>{action}
+        </article>;
+      })}
+    </div>}
+    {!loadError && !birds && <EmptyState icon="♧" title="Loading atlas" description="Gathering your recorded species." />}
+    {birds?.length === 0 && <EmptyState icon="♬" title="No detections yet" description="Species will appear here as BirdFrame hears birds." />}
+    {!!birds?.length && missingOnly && !missing.length && <p>All detected species have artwork.</p>}
+    {notice && <p className="form-notice">{notice}</p>}
+  </section>;
+}
 function EmptyState({ icon, title, description }: { icon: string; title: string; description: string }) { return <div className="empty"><div>{icon}</div><strong>{title}</strong><p>{description}</p></div> }
 function WaitingArtwork() { return <div className="waiting-art"><span className="sun"></span><span className="bird bird-one">⌁</span><span className="bird bird-two">⌁</span><p>Your first birds will gather here</p></div> }
 
@@ -245,15 +327,15 @@ function SettingsPanelContent() {
   const [form, setForm] = useState<Settings>(defaults); const [message, setMessage] = useState("");
   const [models, setModels] = useState<Array<{ id: string; name?: string }>>([]); const [operations, setOperations] = useState("");
   const [hasOpenRouterKey, setHasOpenRouterKey] = useState(false);
-  const [missingCount, setMissingCount] = useState<number | null>(null);
+  const { birds, loadError } = useObservedBirds();
+  const missingCount = birds?.filter((bird) => !bird.has_artwork).length;
   const update = (key: keyof Settings, value: string | boolean) => setForm((old) => ({ ...old, [key]: value }));
   useEffect(() => { void api.settings().then((raw) => { setForm(fromApiSettings(raw)); setHasOpenRouterKey(Boolean(raw.has_openrouter_api_key)); }).catch(() => undefined); }, []);
-  useEffect(() => { void api.occurrences().then((items) => setMissingCount(items.filter((item) => !item.has_artwork).length)).catch(() => setMissingCount(0)); }, []);
   const save = async (e?: FormEvent) => { e?.preventDefault(); try { await api.saveSettings(toPayload(form)); setMessage("Settings saved. API keys are encrypted at rest."); if (form.openrouterApiKey.trim()) setHasOpenRouterKey(true); return true; } catch { setMessage("Could not save yet. Make sure the BirdFrame API is running."); return false; } };
   const loadModels = async () => { if (!await save()) return; try { setModels(await api.models()); setOperations("Image-capable OpenRouter models loaded."); } catch { setOperations("Could not load models. Check the API key and try again."); } };
-  const generate = async () => { if (!await save()) return; try { const species = (await api.occurrences()).filter((entry) => !entry.has_artwork).slice(0, 12).map(({ common_name, scientific_name }) => ({ common_name, scientific_name })); if (!species.length) { setOperations("All observed species already have artwork."); return; } const job = await api.generateArt({ species, poses: "both" }); setOperations(`Artwork job ${job.id} queued for ${species.length} species missing artwork. Track it in Activity log below.`); } catch { setOperations("Could not start artwork generation. Load a model and confirm detections are available."); } };
+  const generate = async () => { if (!await save()) return; try { const species = (await api.observedBirds()).filter((entry) => !entry.has_artwork).slice(0, 12).map(({ common_name, scientific_name }) => ({ common_name, scientific_name })); if (!species.length) { setOperations("All observed species already have artwork."); return; } const job = await api.generateArt({ species, poses: "both" }); setOperations(`Artwork job ${job.id} queued for ${species.length} species missing artwork. Track it in Activity log below.`); } catch { setOperations("Could not start artwork generation. Load a model and confirm detections are available."); } };
   return <form className="settings-form" onSubmit={save}>
-    <section className="settings-section"><div><p className="eyebrow">OPENROUTER ARTWORK</p><h2>Create your bird library</h2><p>Save your key, load the available image models, choose one, then generate reusable bird assets for the species BirdFrame has observed but still lacks artwork for.</p></div><div><div className="form-grid"><Field label="OpenRouter API key" hint="Encrypted at rest and never returned to the browser after saving." badge={hasOpenRouterKey ? <em className="saved-badge">✓ Key saved</em> : undefined}><input type="password" value={form.openrouterApiKey} placeholder={hasOpenRouterKey ? "sk-or-v1-… (replace only if needed)" : "sk-or-v1-…"} onChange={(e) => update("openrouterApiKey", e.target.value)} /></Field><Field label="Image model"><input list="openrouter-models" value={form.openrouterModel} placeholder="Save key, then load models" onChange={(e) => update("openrouterModel", e.target.value)} /><datalist id="openrouter-models">{models.map((model) => <option key={model.id} value={model.id}>{model.name || model.id}</option>)}</datalist></Field><Field label="Palette"><select value={form.palette} onChange={(e) => update("palette", e.target.value)}><option>earthy</option><option>muted garden</option><option>indigo &amp; vermillion</option></select></Field></div><div className="setup-actions"><button type="button" className="button ghost" onClick={() => void loadModels()}>Load image models</button><button type="button" className="button primary" onClick={() => void generate()}>{missingCount === null ? "Counting missing species…" : missingCount > 0 ? `Generate artwork for ${missingCount} missing species (${Math.min(missingCount, 12) * 2} generations per job)` : "Generate artwork for missing species"}</button></div>{operations && <p className="form-notice">{operations}</p>}<div className="callout"><span>⚠</span><div><strong>Generation costs money</strong><p>Each generation normally costs around 0.06 USD per bird. Each job generates up to 12 species (24 generations) at a time — run the button again for the rest.</p></div></div><p className="help-text">Generated PNG assets and compositions are stored under <code>/data/art</code>; Docker Compose maps that directory to <code>./data</code> by default, so they survive image/container updates.</p></div></section>
+    <section className="settings-section"><div><p className="eyebrow">OPENROUTER ARTWORK</p><h2>Create your bird library</h2><p>Save your key, load the available image models, choose one, then generate reusable bird assets for the species BirdFrame has observed but still lacks artwork for.</p></div><div><div className="form-grid"><Field label="OpenRouter API key" hint="Encrypted at rest and never returned to the browser after saving." badge={hasOpenRouterKey ? <em className="saved-badge">✓ Key saved</em> : undefined}><input type="password" value={form.openrouterApiKey} placeholder={hasOpenRouterKey ? "sk-or-v1-… (replace only if needed)" : "sk-or-v1-…"} onChange={(e) => update("openrouterApiKey", e.target.value)} /></Field><Field label="Image model"><input list="openrouter-models" value={form.openrouterModel} placeholder="Save key, then load models" onChange={(e) => update("openrouterModel", e.target.value)} /><datalist id="openrouter-models">{models.map((model) => <option key={model.id} value={model.id}>{model.name || model.id}</option>)}</datalist></Field><Field label="Palette"><select value={form.palette} onChange={(e) => update("palette", e.target.value)}><option>earthy</option><option>muted garden</option><option>indigo &amp; vermillion</option></select></Field></div><div className="setup-actions"><button type="button" className="button ghost" onClick={() => void loadModels()}>Load image models</button><button type="button" className="button primary" onClick={() => void generate()}>{missingCount === undefined ? (loadError || "Counting missing species…") : missingCount > 0 ? `Generate artwork for ${missingCount} missing species (${Math.min(missingCount, 12) * 2} generations per job)` : "Generate artwork for missing species"}</button></div>{operations && <p className="form-notice">{operations}</p>}<div className="callout"><span>⚠</span><div><strong>Generation costs money</strong><p>Each generation normally costs around 0.06 USD per bird. Each job generates up to 12 species (24 generations) at a time — run the button again for the rest.</p></div></div><p className="help-text">Generated PNG assets and compositions are stored under <code>/data/art</code>; Docker Compose maps that directory to <code>./data</code> by default, so they survive image/container updates.</p></div></section>
     <section className="settings-section"><div><p className="eyebrow">DISPLAY API</p><h2>Same art, anywhere</h2><p>The JPEG endpoint serves the byte-identical composition sent to the Frame.</p></div><div className="api-url"><code>{window.location.origin}/api/v1/display/current.jpg</code><a href="/api/v1/display/current.jpg" target="_blank">Open ↗</a></div></section>
     <footer className="save-bar"><span>{message}</span><button className="button primary" type="submit">Save changes</button></footer>
   </form>;
