@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.2.1
+
+* Find missing artwork across the full detection history in the Atlas, including
+  species heard only once. Filter by artwork status and sort by detection count
+  or name. Bulk generation uses the same inventory.
+* Preserve omitted settings on save, including the occurrence threshold and the
+  display-token requirement.
+
 ## 0.2.0
 
 * Browse and install official and community AvianVisitors hosted bundles, and
